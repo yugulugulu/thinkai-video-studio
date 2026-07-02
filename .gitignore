@@ -1,0 +1,7 @@
+node_modules
+dist
+.DS_Store
+server/data/config.json
+server/data/tasks.json
+server/generated
+*.log

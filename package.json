@@ -1,0 +1,21 @@
+{
+  "name": "thinkai-ch3-video-studio",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "db:start": "docker start thinkai-postgres || docker run -d --name thinkai-postgres -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=thinkai_video_studio -p 5432:5432 public.ecr.aws/docker/library/postgres:16",
+    "db:stop": "docker stop thinkai-postgres",
+    "dev": "concurrently \"npm run dev --workspace server\" \"npm run dev --workspace client\"",
+    "build": "npm run build --workspace client",
+    "start": "npm run start --workspace server"
+  },
+  "workspaces": [
+    "client",
+    "server"
+  ],
+  "devDependencies": {
+    "@rollup/rollup-darwin-arm64": "^4.60.1",
+    "concurrently": "^9.2.1"
+  }
+}
