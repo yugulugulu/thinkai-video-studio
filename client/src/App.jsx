@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api.js";
-import { CH3_MODELS } from "./models.js";
+import { CH3_MODELS, filterEnabledModels } from "./models.js";
 import weblogo from "./weblogo.png";
 
 const defaultForm = {
@@ -254,6 +254,7 @@ function ModelTooltip({ model }) {
 export default function App() {
   const [models, setModels] = useState(CH3_MODELS);
   const [config, setConfig] = useState({ baseUrl: "https://www.thinkai.tv", apiKey: "", hasApiKey: false });
+  const [configOpen, setConfigOpen] = useState(false);
   const [form, setForm] = useState(defaultForm);
   const [authMode, setAuthMode] = useState("login");
   const [authForm, setAuthForm] = useState(defaultAuthForm);
@@ -361,7 +362,7 @@ export default function App() {
     ]);
 
     if (modelResult.status === "fulfilled") {
-      setModels(modelResult.value.models);
+      setModels(filterEnabledModels(modelResult.value.models));
     }
 
     if (configResult.status === "fulfilled") {
@@ -382,7 +383,7 @@ export default function App() {
   useEffect(() => {
     Promise.allSettled([api.models(), api.me()]).then(async ([modelResult, meResult]) => {
       if (modelResult.status === "fulfilled") {
-        setModels(modelResult.value.models);
+        setModels(filterEnabledModels(modelResult.value.models));
       }
 
       if (meResult.status === "fulfilled") {
@@ -690,7 +691,6 @@ export default function App() {
         <section className="auth-card">
           <p className="eyebrow"><Icon name="◌" size={14} /> Local Auth</p>
           <h1>{authMode === "register" ? "注册账户" : "登录控制台"}</h1>
-          <p className="auth-copy">本地 PostgreSQL 已接入，先完成账户注册或登录，再使用视频生成控制台。</p>
 
           {authMode === "register" && (
             <label>
@@ -745,33 +745,15 @@ export default function App() {
 
   return (
     <main className="app-shell">
-      <section className="topbar">
-        <div className="brand-lockup">
-          <img className="brand-logo" src={weblogo} alt="ThinkAI News" />
-        </div>
-        <div className="topbar-actions">
-          <div className="health">
-            <span className={config.hasApiKey ? "dot ready" : "dot"} />
-            {config.hasApiKey ? "API Key 已配置" : "等待配置 API Key"}
-          </div>
-          <div className="user-pill">
-            <span>{currentUser.name}</span>
-            <button className="mini-button" onClick={logout}>退出</button>
-          </div>
-        </div>
-      </section>
-
-      <section className="workspace">
-        <aside className="control-rail">
-          <div className="panel">
+      {configOpen && (
+        <div className="dialog-backdrop" onClick={() => setConfigOpen(false)}>
+          <section className="config-dialog" onClick={(event) => event.stopPropagation()}>
             <div className="panel-title">
-              <Icon name="⚙" />
-              <span>接口配置</span>
+              <span>API Key 配置</span>
+              <button type="button" className="icon-button" onClick={() => setConfigOpen(false)} aria-label="关闭">
+                <Icon name="×" size={18} />
+              </button>
             </div>
-            <label>
-              Base URL
-              <div className="fixed-base-url">{config.baseUrl}</div>
-            </label>
             <label>
               API Key
               <div className="secret-input">
@@ -802,8 +784,28 @@ export default function App() {
                 <p className="empty-history">当前用户还没有保存 API Key。</p>
               )}
             </div>
-          </div>
+          </section>
+        </div>
+      )}
 
+      <section className="topbar">
+        <div className="brand-lockup">
+          <img className="brand-logo" src={weblogo} alt="ThinkAI News" />
+        </div>
+        <div className="topbar-actions">
+          <button type="button" className="health api-config-trigger" onClick={() => setConfigOpen(true)}>
+            <span className={config.hasApiKey ? "dot ready" : "dot"} />
+            {config.hasApiKey ? "API Key 已配置" : "等待配置 API Key"}
+          </button>
+          <div className="user-pill">
+            <span>{currentUser.name}</span>
+            <button className="mini-button" onClick={logout}>退出</button>
+          </div>
+        </div>
+      </section>
+
+      <section className="workspace">
+        <aside className="control-rail">
           <div className="model-list">
             <div className="panel-title">
               <Icon name="✦" />
@@ -820,7 +822,10 @@ export default function App() {
                     videos: model.supportsVideoReference ? current.videos : []
                   }))}
                 >
-                  <span>{model.name}</span>
+                  <span className="model-option-head">
+                    <span>{model.name}</span>
+                    {model.priceLabel ? <em className="model-price">{model.priceLabel}</em> : null}
+                  </span>
                   <small>{model.id}</small>
                 </button>
                 <ModelTooltip model={model} />
@@ -855,7 +860,6 @@ export default function App() {
               placeholder="必填，最长 6000 字符。建议写清主体、动作、镜头运动、构图、光线、节奏和稳定性要求。"
               onChange={(event) => setForm({ ...form, prompt: event.target.value })}
             />
-            <span className="field-hint">必填。CH3 仅支持 references 模式；XH 系列可以只写 prompt，其他模型至少要配 1 张参考图。</span>
           </label>
 
           <div className="param-grid">

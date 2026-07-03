@@ -139,7 +139,7 @@ button:disabled {
 
 .brand-logo {
   display: block;
-  width: min(180px, 100%);
+  width: min(120px, 100%);
   max-width: 100%;
   height: auto;
 }
@@ -197,6 +197,16 @@ h2 {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+.api-config-trigger {
+  border: 1px solid var(--line);
+}
+
+.api-config-trigger:hover {
+  transform: translateY(-1px);
+  border-color: var(--line-strong);
+  background: rgba(255, 255, 255, 0.92);
 }
 
 .user-pill {
@@ -392,6 +402,46 @@ select:focus {
   overflow-wrap: anywhere;
 }
 
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.18);
+  backdrop-filter: blur(18px) saturate(1.08);
+}
+
+.config-dialog {
+  display: grid;
+  gap: 16px;
+  width: min(520px, 100%);
+  padding: 24px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xl);
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 28px 70px rgba(15, 23, 42, 0.16);
+}
+
+.icon-button {
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.78);
+  color: var(--muted-strong);
+  transition: background 170ms ease, border-color 170ms ease, transform 170ms ease;
+}
+
+.icon-button:hover {
+  transform: translateY(-1px);
+  border-color: var(--line-strong);
+  background: #ffffff;
+}
+
 .secret-input {
   position: relative;
 }
@@ -534,6 +584,27 @@ select:focus {
 
 .model-option span {
   font-weight: 850;
+}
+
+.model-option-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.model-price {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(255, 138, 0, 0.14);
+  color: #d95f02;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 800;
+  white-space: nowrap;
 }
 
 .model-option small {
@@ -1087,7 +1158,7 @@ pre {
   }
 
   .brand-logo {
-    width: min(140px, 100%);
+    width: min(94px, 100%);
   }
 
   .workspace,
@@ -1107,5 +1178,13 @@ pre {
   .health,
   .user-pill {
     justify-content: space-between;
+  }
+
+  .dialog-backdrop {
+    padding: 16px;
+  }
+
+  .config-dialog {
+    padding: 20px;
   }
 }
