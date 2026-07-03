@@ -1,8 +1,9 @@
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import { envString } from "./env.js";
 import { query } from "./db.js";
 
-const JWT_SECRET = process.env.JWT_SECRET || "thinkai-video-studio-dev-secret";
+const JWT_SECRET = envString("JWT_SECRET", "thinkai-video-studio-dev-secret");
 
 function sanitizeUser(row) {
   return {
@@ -15,6 +16,24 @@ function sanitizeUser(row) {
 
 function signToken(user) {
   return jwt.sign({ userId: user.id, email: user.email }, JWT_SECRET, { expiresIn: "7d" });
+}
+
+export function createVideoDownloadToken(userId, taskId) {
+  return jwt.sign(
+    { userId: String(userId), taskId: String(taskId), type: "video-download" },
+    JWT_SECRET,
+    { expiresIn: "15m" }
+  );
+}
+
+export function verifyVideoDownloadToken(token, taskId) {
+  const payload = jwt.verify(token, JWT_SECRET);
+  if (payload.type !== "video-download" || String(payload.taskId) !== String(taskId)) {
+    const error = new Error("下载链接无效");
+    error.status = 401;
+    throw error;
+  }
+  return payload;
 }
 
 export async function registerUser({ email, password, name }) {
@@ -89,24 +108,20 @@ export async function getUserById(id) {
   return result.rows[0] ? sanitizeUser(result.rows[0]) : null;
 }
 
-export async function listApiKeysByUserId(userId) {
+export async function getApiKeyByUserId(userId) {
   const result = await query(
     `SELECT id, api_key, created_at
      FROM api_keys
      WHERE user_id = $1
-     ORDER BY created_at DESC`,
+     LIMIT 1`,
     [userId]
   );
-  return result.rows.map((row) => ({
+  const row = result.rows[0];
+  return row ? {
     id: row.id,
     apiKey: row.api_key,
     createdAt: row.created_at
-  }));
-}
-
-export async function getLatestApiKeyByUserId(userId) {
-  const keys = await listApiKeysByUserId(userId);
-  return keys[0] || null;
+  } : null;
 }
 
 export async function saveApiKeyForUser(userId, apiKey) {
@@ -115,7 +130,7 @@ export async function saveApiKeyForUser(userId, apiKey) {
     throw new Error("API Key 不能为空");
   }
 
-  const existing = await getLatestApiKeyByUserId(userId);
+  const existing = await getApiKeyByUserId(userId);
   if (existing?.apiKey === normalizedApiKey) {
     return existing;
   }
@@ -139,22 +154,20 @@ export async function saveApiKeyForUser(userId, apiKey) {
     throw new Error("该 API Key 已被其他用户使用");
   }
 
-  try {
-    const result = await query(
-      `INSERT INTO api_keys (user_id, api_key)
-       VALUES ($1, $2)
-       RETURNING id, api_key, created_at`,
-      [userId, normalizedApiKey]
-    );
-    const row = result.rows[0];
-    return {
-      id: row.id,
-      apiKey: row.api_key,
-      createdAt: row.created_at
-    };
-  } catch (error) {
-    throw error;
-  }
+  const result = await query(
+    `INSERT INTO api_keys (user_id, api_key)
+     VALUES ($1, $2)
+     ON CONFLICT (user_id)
+     DO UPDATE SET api_key = EXCLUDED.api_key, created_at = NOW()
+     RETURNING id, api_key, created_at`,
+    [userId, normalizedApiKey]
+  );
+  const row = result.rows[0];
+  return {
+    id: row.id,
+    apiKey: row.api_key,
+    createdAt: row.created_at
+  };
 }
 
 export async function requireAuth(req, res, next) {

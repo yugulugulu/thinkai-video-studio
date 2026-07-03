@@ -1,7 +1,11 @@
 node_modules
 dist
 .DS_Store
+.env
+.env.*
+.env.local
 server/data/config.json
 server/data/tasks.json
+server/data/tasks.migrated.json
 server/generated
 *.log

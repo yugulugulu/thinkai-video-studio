@@ -1,10 +1,3 @@
-import { createWriteStream } from "node:fs";
-import { mkdir } from "node:fs/promises";
-import path from "node:path";
-import { pipeline } from "node:stream/promises";
-import { nanoid } from "nanoid";
-import { generatedDir } from "./storage.js";
-
 function normalizeBaseUrl(baseUrl) {
   return baseUrl.replace(/\/+$/, "");
 }
@@ -65,12 +58,16 @@ export async function getVideoTask(config, taskId) {
   return parseJsonResponse(response);
 }
 
-export async function downloadVideo(config, taskId) {
-  await mkdir(generatedDir, { recursive: true });
+export async function getVideoContentStream(config, taskId, options = {}) {
+  const headers = {
+    Authorization: `Bearer ${config.apiKey}`
+  };
+  if (options.range) {
+    headers.Range = options.range;
+  }
+
   const response = await fetch(`${normalizeBaseUrl(config.baseUrl)}/v1/videos/${taskId}/content`, {
-    headers: {
-      Authorization: `Bearer ${config.apiKey}`
-    },
+    headers,
     signal: AbortSignal.timeout(300000)
   });
 
@@ -81,8 +78,5 @@ export async function downloadVideo(config, taskId) {
     throw error;
   }
 
-  const filename = `${taskId}-${nanoid(8)}.mp4`;
-  const outputPath = path.join(generatedDir, filename);
-  await pipeline(response.body, createWriteStream(outputPath));
-  return { filename, outputPath, url: `/videos/${filename}` };
+  return response;
 }

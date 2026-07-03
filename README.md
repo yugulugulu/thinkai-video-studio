@@ -12,6 +12,17 @@
 - User: `postgres`
 - Password: `postgres`
 
+## 环境变量
+
+前后端分别使用两套环境文件：
+
+- [server/.env.development](/Users/pakyo/Coding/AI视频/server/.env.development)
+- [server/.env.production](/Users/pakyo/Coding/AI视频/server/.env.production)
+- [client/.env.development](/Users/pakyo/Coding/AI视频/client/.env.development)
+- [client/.env.production](/Users/pakyo/Coding/AI视频/client/.env.production)
+
+开发环境已经填好本地数据库和本地 API 地址。生产环境文件只保留空占位，需要上线前自行填写服务器数据库、JWT 和前端 API 地址。
+
 启动数据库：
 
 ```bash
