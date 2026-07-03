@@ -999,7 +999,7 @@ export default function App() {
                     <button className="history-main" onClick={() => openHistoryTask(record)}>
                       <span className="history-row">
                         <strong>{statusText(record.status)}</strong>
-                        <small>{formatTime(record.updatedAt)}</small>
+                        <small>{formatTime(record.createdAt)}</small>
                       </span>
                       <span className="history-model">{record.model || record.task?.model || "-"}</span>
                       <code>{record.taskId}</code>
