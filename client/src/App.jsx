@@ -236,6 +236,21 @@ function ReferencePanel({
   );
 }
 
+function ModelTooltip({ model }) {
+  if (!model) return null;
+
+  return (
+    <div className="model-tooltip" role="tooltip">
+      <strong>{model.tooltipTitle || model.description}</strong>
+      <p>{model.tooltipBody || model.description}</p>
+      <div className="model-tooltip-meta">
+        <span>{model.resolutions?.join(" / ") || "-"}</span>
+        <span>{model.textToVideo ? "支持纯文本" : "需参考图片"}</span>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [models, setModels] = useState(CH3_MODELS);
   const [config, setConfig] = useState({ baseUrl: "https://www.thinkai.tv", apiKey: "", hasApiKey: false });
@@ -795,19 +810,21 @@ export default function App() {
               <span>模型选择</span>
             </div>
             {models.map((model) => (
-              <button
-                key={model.id}
-                className={`model-option ${form.model === model.id ? "active" : ""}`}
-                onClick={() => setForm((current) => ({
-                  ...current,
-                  model: model.id,
-                  resolution: model.resolutions[0],
-                  videos: model.supportsVideoReference ? current.videos : []
-                }))}
-              >
-                <span>{model.name}</span>
-                <small>{model.id}</small>
-              </button>
+              <div key={model.id} className="model-option-wrap">
+                <button
+                  className={`model-option ${form.model === model.id ? "active" : ""}`}
+                  onClick={() => setForm((current) => ({
+                    ...current,
+                    model: model.id,
+                    resolution: model.resolutions[0],
+                    videos: model.supportsVideoReference ? current.videos : []
+                  }))}
+                >
+                  <span>{model.name}</span>
+                  <small>{model.id}</small>
+                </button>
+                <ModelTooltip model={model} />
+              </div>
             ))}
           </div>
         </aside>
