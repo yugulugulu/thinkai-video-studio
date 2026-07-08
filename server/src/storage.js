@@ -124,6 +124,12 @@ export async function upsertTaskRecord(record) {
     [record.taskId]
   );
 
+  if (existing.rows[0] && String(existing.rows[0].user_id) !== String(record.userId)) {
+    const error = new Error("任务不属于当前用户");
+    error.status = 403;
+    throw error;
+  }
+
   const now = new Date().toISOString();
   const current = existing.rows[0] ? sanitizeTaskRow(existing.rows[0]) : { createdAt: now };
   const nextRecord = {

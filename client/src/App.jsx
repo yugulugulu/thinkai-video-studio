@@ -27,7 +27,7 @@ const VIDEO_MAX_COUNT = 3;
 const AUDIO_MAX_COUNT = 3;
 const MIN_DURATION = 4;
 const MAX_DURATION = 15;
-const ACTIVE_TASK_STORAGE_KEY = "thinkai_video_studio_active_task_id";
+const ACTIVE_TASK_STORAGE_KEY_PREFIX = "thinkai_video_studio_active_task_id";
 const POLL_ERROR_RETRY_LIMIT = 6;
 
 const FIELD_CONFIG = {
@@ -150,6 +150,8 @@ function ReferencePanel({
   onAdd,
   onRemove
 }) {
+  const showImagePreview = config.field === "images";
+
   return (
     <label className="asset-panel">
       <span className="field-top">
@@ -214,6 +216,11 @@ function ReferencePanel({
               const active = selected.some((item) => String(item.id) === String(asset.id));
               return (
                 <div className="asset-item" key={`library-${asset.id}`}>
+                  {showImagePreview && asset.url ? (
+                    <div className="asset-thumb">
+                      <img src={asset.url} alt={asset.filename} loading="lazy" />
+                    </div>
+                  ) : null}
                   <div className="asset-meta">
                     <strong>{asset.filename}</strong>
                     <small>{formatBytes(asset.sizeBytes)} · {formatTime(asset.createdAt)}</small>
@@ -276,6 +283,7 @@ export default function App() {
   const pollTaskIdRef = useRef("");
   const pollErrorCountRef = useRef(0);
   const videoAccessRef = useRef({ taskId: "", file: null });
+  const activeUserIdRef = useRef("");
 
   const selectedModel = useMemo(
     () => models.find((model) => model.id === form.model) || models[0],
@@ -333,11 +341,25 @@ export default function App() {
     };
   }, []);
 
+  function getActiveTaskStorageKey(userId = currentUser?.id) {
+    return userId ? `${ACTIVE_TASK_STORAGE_KEY_PREFIX}:${userId}` : ACTIVE_TASK_STORAGE_KEY_PREFIX;
+  }
+
+  function clearTaskViewState() {
+    setTask(null);
+    setSubmittedPayload(null);
+    setVideoFile(null);
+    setTaskHistory([]);
+    setAssets([]);
+    videoAccessRef.current = { taskId: "", file: null };
+  }
+
   function setActiveTaskId(taskId) {
+    const storageKey = getActiveTaskStorageKey();
     if (taskId) {
-      window.localStorage.setItem(ACTIVE_TASK_STORAGE_KEY, taskId);
+      window.localStorage.setItem(storageKey, taskId);
     } else {
-      window.localStorage.removeItem(ACTIVE_TASK_STORAGE_KEY);
+      window.localStorage.removeItem(storageKey);
     }
   }
 
@@ -353,13 +375,19 @@ export default function App() {
     }
   }
 
-  async function loadAppData() {
+  function isCurrentUserRequest(userId) {
+    return !userId || activeUserIdRef.current === String(userId);
+  }
+
+  async function loadAppData(userId = currentUser?.id) {
     const [modelResult, configResult, taskResult, uploadResult] = await Promise.allSettled([
       api.models(),
       api.config(),
       api.tasks(),
       api.uploads()
     ]);
+
+    if (!isCurrentUserRequest(userId)) return;
 
     if (modelResult.status === "fulfilled") {
       setModels(filterEnabledModels(modelResult.value.models));
@@ -387,8 +415,9 @@ export default function App() {
       }
 
       if (meResult.status === "fulfilled") {
+        activeUserIdRef.current = String(meResult.value.user.id);
         setCurrentUser(meResult.value.user);
-        await loadAppData();
+        await loadAppData(meResult.value.user.id);
       }
 
       setAuthLoading(false);
@@ -409,16 +438,21 @@ export default function App() {
   }
 
   async function loadTasks() {
+    const requestUserId = currentUser?.id;
     setHistoryLoading(true);
     try {
       const data = await api.tasks();
+      if (!isCurrentUserRequest(requestUserId)) return [];
       setTaskHistory(data.tasks);
       return data.tasks;
     } catch (error) {
+      if (!isCurrentUserRequest(requestUserId)) return [];
       setMessage(error.message);
       return [];
     } finally {
-      setHistoryLoading(false);
+      if (isCurrentUserRequest(requestUserId)) {
+        setHistoryLoading(false);
+      }
     }
   }
 
@@ -429,10 +463,13 @@ export default function App() {
       const result = authMode === "register"
         ? await api.register(authForm)
         : await api.login({ email: authForm.email, password: authForm.password });
+      stopPolling();
+      clearTaskViewState();
       api.setToken(result.token);
+      activeUserIdRef.current = String(result.user.id);
       setCurrentUser(result.user);
       setAuthForm(defaultAuthForm);
-      await loadAppData();
+      await loadAppData(result.user.id);
     } catch (error) {
       setAuthMessage(error.message);
     } finally {
@@ -442,16 +479,13 @@ export default function App() {
   }
 
   function logout() {
+    stopPolling();
     api.clearToken();
+    activeUserIdRef.current = "";
     setCurrentUser(null);
-    setTask(null);
-    setSubmittedPayload(null);
-    setVideoFile(null);
-    setTaskHistory([]);
-    setAssets([]);
+    clearTaskViewState();
     setAuthMessage("");
     setMessage("");
-    stopPolling();
   }
 
   async function saveConfig() {
@@ -490,9 +524,12 @@ export default function App() {
   }
 
   async function refreshTask(taskId, shouldDownload = true) {
+    const requestUserId = currentUser?.id;
     const data = await api.getTask(taskId);
+    if (!isCurrentUserRequest(requestUserId)) return { task: null, record: null };
     setTask(data.task);
     const tasks = await loadTasks();
+    if (!isCurrentUserRequest(requestUserId)) return { task: null, record: null };
     const currentRecord = tasks.find((item) => item.taskId === taskId);
     if (data.task.status === "completed" && shouldDownload) {
       stopPolling();
@@ -663,7 +700,7 @@ export default function App() {
   useEffect(() => {
     if (!currentUser || !taskHistory.length) return;
 
-    const activeTaskId = window.localStorage.getItem(ACTIVE_TASK_STORAGE_KEY) || "";
+    const activeTaskId = window.localStorage.getItem(getActiveTaskStorageKey(currentUser.id)) || "";
     const resumableTask = taskHistory.find((item) => item.taskId === activeTaskId)
       || taskHistory.find((item) => isPollingStatus(item.status));
 

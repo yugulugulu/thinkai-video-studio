@@ -298,8 +298,13 @@ app.get("/api/videos/:taskId", requireAuth, async (req, res) => {
       return;
     }
 
-    const task = await getVideoTask({ ...config, apiKey: latestApiKey.apiKey }, req.params.taskId);
     const currentRecord = await getTaskRecord(req.params.taskId, req.user.id);
+    if (!currentRecord) {
+      res.status(404).json({ error: "任务不存在" });
+      return;
+    }
+
+    const task = await getVideoTask({ ...config, apiKey: latestApiKey.apiKey }, req.params.taskId);
     let nextStatus = task.status;
     let nextProgress = task.progress;
     let file = currentRecord?.file || null;
