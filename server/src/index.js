@@ -28,6 +28,90 @@ app.use(cors());
 app.use(express.json({ limit: "1mb" }));
 
 const archiveLocks = new Map();
+const UPLOAD_RATE_WINDOW_MS = 60 * 1000;
+const MAX_UPLOADS_PER_USER_WINDOW = 20;
+const MAX_UPLOAD_CONCURRENCY_PER_USER = 3;
+const MAX_GLOBAL_UPLOAD_CONCURRENCY = 10;
+const uploadRateBuckets = new Map();
+const uploadConcurrencyByUser = new Map();
+let globalUploadConcurrency = 0;
+
+function createUploadRateKey(req) {
+  return `${req.user.id}::${req.ip || "unknown"}`;
+}
+
+function getUploadRateBucket(key) {
+  const now = Date.now();
+  const bucket = uploadRateBuckets.get(key);
+  if (!bucket || bucket.expiresAt <= now) {
+    const freshBucket = { count: 0, expiresAt: now + UPLOAD_RATE_WINDOW_MS };
+    uploadRateBuckets.set(key, freshBucket);
+    return freshBucket;
+  }
+  return bucket;
+}
+
+function uploadLimitError(message, status = 429) {
+  const error = new Error(message);
+  error.status = status;
+  return error;
+}
+
+function enforceUploadRate(req) {
+  const bucket = getUploadRateBucket(createUploadRateKey(req));
+  if (bucket.count >= MAX_UPLOADS_PER_USER_WINDOW) {
+    throw uploadLimitError("上传过于频繁，请稍后再试");
+  }
+  bucket.count += 1;
+}
+
+function acquireUploadSlot(req) {
+  const userId = String(req.user.id);
+  const userConcurrency = uploadConcurrencyByUser.get(userId) || 0;
+  if (userConcurrency >= MAX_UPLOAD_CONCURRENCY_PER_USER) {
+    throw uploadLimitError("当前上传任务较多，请等待已有上传完成后再试");
+  }
+  if (globalUploadConcurrency >= MAX_GLOBAL_UPLOAD_CONCURRENCY) {
+    throw uploadLimitError("当前上传任务较多，请稍后再试");
+  }
+
+  uploadConcurrencyByUser.set(userId, userConcurrency + 1);
+  globalUploadConcurrency += 1;
+}
+
+function releaseUploadSlot(req) {
+  const userId = String(req.user?.id || "");
+  if (!userId) return;
+
+  const nextUserConcurrency = Math.max(0, (uploadConcurrencyByUser.get(userId) || 0) - 1);
+  if (nextUserConcurrency) {
+    uploadConcurrencyByUser.set(userId, nextUserConcurrency);
+  } else {
+    uploadConcurrencyByUser.delete(userId);
+  }
+  globalUploadConcurrency = Math.max(0, globalUploadConcurrency - 1);
+}
+
+function limitUpload(req, res, next) {
+  try {
+    enforceUploadRate(req);
+    acquireUploadSlot(req);
+  } catch (error) {
+    next(error);
+    return;
+  }
+
+  let released = false;
+  const releaseOnce = () => {
+    if (released) return;
+    released = true;
+    releaseUploadSlot(req);
+  };
+
+  res.once("finish", releaseOnce);
+  res.once("close", releaseOnce);
+  next();
+}
 
 function maskError(error) {
   const upstreamMessage = error.body?.error?.message || error.body?.message || error.message;
@@ -161,9 +245,9 @@ app.post("/api/auth/register", async (req, res) => {
 
 app.post("/api/auth/login", async (req, res) => {
   try {
-    res.json(await loginUser(req.body));
+    res.json(await loginUser(req.body, { ip: req.ip }));
   } catch (error) {
-    res.status(400).json(maskError(error));
+    res.status(error.status || 400).json(maskError(error));
   }
 });
 
@@ -219,7 +303,7 @@ app.put("/api/config", requireAuth, async (req, res, next) => {
   }
 });
 
-app.post("/api/uploads", requireAuth, upload.single("file"), async (req, res, next) => {
+app.post("/api/uploads", requireAuth, limitUpload, upload.single("file"), async (req, res, next) => {
   try {
     const kind = validateUploadInput(req.body.kind, req.file);
     req.file.originalname = normalizeUploadedFilename(req.file.originalname);

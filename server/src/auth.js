@@ -4,6 +4,42 @@ import { envString } from "./env.js";
 import { query } from "./db.js";
 
 const JWT_SECRET = envString("JWT_SECRET", "thinkai-video-studio-dev-secret");
+const LOGIN_FAILURE_WINDOW_MS = 60 * 1000;
+const MAX_LOGIN_FAILURES_PER_WINDOW = 5;
+const loginFailureBuckets = new Map();
+
+function createLoginFailureKey(email, ip) {
+  return `${String(email || "").trim().toLowerCase()}::${String(ip || "unknown")}`;
+}
+
+function getLoginFailureBucket(key) {
+  const now = Date.now();
+  const bucket = loginFailureBuckets.get(key);
+  if (!bucket || bucket.expiresAt <= now) {
+    const freshBucket = { count: 0, expiresAt: now + LOGIN_FAILURE_WINDOW_MS };
+    loginFailureBuckets.set(key, freshBucket);
+    return freshBucket;
+  }
+  return bucket;
+}
+
+function assertLoginAllowed(key) {
+  const bucket = getLoginFailureBucket(key);
+  if (bucket.count >= MAX_LOGIN_FAILURES_PER_WINDOW) {
+    const error = new Error("错误次数过多，一分钟后再试");
+    error.status = 429;
+    throw error;
+  }
+}
+
+function recordLoginFailure(key) {
+  const bucket = getLoginFailureBucket(key);
+  bucket.count += 1;
+}
+
+function clearLoginFailures(key) {
+  loginFailureBuckets.delete(key);
+}
 
 function sanitizeUser(row) {
   return {
@@ -69,12 +105,15 @@ export async function registerUser({ email, password, name }) {
   }
 }
 
-export async function loginUser({ email, password }) {
+export async function loginUser({ email, password }, options = {}) {
   const normalizedEmail = String(email || "").trim().toLowerCase();
+  const failureKey = createLoginFailureKey(normalizedEmail, options.ip);
 
   if (!normalizedEmail || !password) {
     throw new Error("请输入邮箱和密码");
   }
+
+  assertLoginAllowed(failureKey);
 
   const result = await query(
     `SELECT id, email, name, created_at, password_hash
@@ -90,9 +129,11 @@ export async function loginUser({ email, password }) {
   const row = result.rows[0];
   const matched = await bcrypt.compare(password, row.password_hash);
   if (!matched) {
+    recordLoginFailure(failureKey);
     throw new Error("邮箱或密码错误");
   }
 
+  clearLoginFailures(failureKey);
   const user = sanitizeUser(row);
   return { user, token: signToken(user) };
 }
