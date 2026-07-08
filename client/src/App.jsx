@@ -279,9 +279,8 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState({ image: false, video: false, audio: false });
-  const pollRef = useRef(null);
-  const pollTaskIdRef = useRef("");
-  const pollErrorCountRef = useRef(0);
+  const pollRefs = useRef(new Map());
+  const pollErrorCountsRef = useRef(new Map());
   const videoAccessRef = useRef({ taskId: "", file: null });
   const activeUserIdRef = useRef("");
 
@@ -337,7 +336,7 @@ export default function App() {
 
   useEffect(() => {
     return () => {
-      if (pollRef.current) window.clearInterval(pollRef.current);
+      stopPolling("", false);
     };
   }, []);
 
@@ -354,24 +353,55 @@ export default function App() {
     videoAccessRef.current = { taskId: "", file: null };
   }
 
-  function setActiveTaskId(taskId) {
-    const storageKey = getActiveTaskStorageKey();
-    if (taskId) {
-      window.localStorage.setItem(storageKey, taskId);
+  function getActiveTaskIds(userId = currentUser?.id) {
+    const storageKey = getActiveTaskStorageKey(userId);
+    const raw = window.localStorage.getItem(storageKey) || "";
+    if (!raw) return [];
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed.filter(Boolean) : [];
+    } catch {
+      return raw ? [raw] : [];
+    }
+  }
+
+  function setActiveTaskIds(taskIds, userId = currentUser?.id) {
+    const storageKey = getActiveTaskStorageKey(userId);
+    const uniqueTaskIds = Array.from(new Set((taskIds || []).filter(Boolean)));
+    if (uniqueTaskIds.length) {
+      window.localStorage.setItem(storageKey, JSON.stringify(uniqueTaskIds));
     } else {
       window.localStorage.removeItem(storageKey);
     }
   }
 
-  function stopPolling(clearActiveTask = true) {
-    if (pollRef.current) {
-      window.clearInterval(pollRef.current);
-      pollRef.current = null;
+  function addActiveTaskId(taskId) {
+    if (!taskId) return;
+    setActiveTaskIds([...getActiveTaskIds(), taskId]);
+  }
+
+  function removeActiveTaskId(taskId) {
+    if (!taskId) return;
+    setActiveTaskIds(getActiveTaskIds().filter((item) => item !== taskId));
+  }
+
+  function stopPolling(taskId = "", clearActiveTask = true) {
+    if (taskId) {
+      const pollRef = pollRefs.current.get(taskId);
+      if (pollRef) window.clearInterval(pollRef);
+      pollRefs.current.delete(taskId);
+      pollErrorCountsRef.current.delete(taskId);
+      if (clearActiveTask) removeActiveTaskId(taskId);
+      return;
     }
-    pollTaskIdRef.current = "";
-    pollErrorCountRef.current = 0;
+
+    for (const pollRef of pollRefs.current.values()) {
+      window.clearInterval(pollRef);
+    }
+    pollRefs.current.clear();
+    pollErrorCountsRef.current.clear();
     if (clearActiveTask) {
-      setActiveTaskId("");
+      setActiveTaskIds([]);
     }
   }
 
@@ -523,58 +553,60 @@ export default function App() {
     return file;
   }
 
-  async function refreshTask(taskId, shouldDownload = true) {
+  async function refreshTask(taskId, shouldDownload = true, updateCurrentTask = true) {
     const requestUserId = currentUser?.id;
     const data = await api.getTask(taskId);
     if (!isCurrentUserRequest(requestUserId)) return { task: null, record: null };
-    setTask(data.task);
+    if (updateCurrentTask) {
+      setTask(data.task);
+    }
     const tasks = await loadTasks();
     if (!isCurrentUserRequest(requestUserId)) return { task: null, record: null };
     const currentRecord = tasks.find((item) => item.taskId === taskId);
     if (data.task.status === "completed" && shouldDownload) {
-      stopPolling();
-      await loadVideoAccess(taskId);
-      setBusy(false);
+      stopPolling(taskId);
+      if (updateCurrentTask) {
+        await loadVideoAccess(taskId);
+      }
     }
     if (data.task.status === "failed") {
-      stopPolling();
-      setBusy(false);
+      stopPolling(taskId);
     }
     if (data.task.status === "downloaded" || currentRecord?.file) {
-      stopPolling();
-      setBusy(false);
+      stopPolling(taskId);
     }
-    if (canPreviewStatus(data.task.status)) {
+    if (updateCurrentTask && canPreviewStatus(data.task.status)) {
       await loadVideoAccess(taskId);
     }
     return { task: data.task, record: currentRecord || null };
   }
 
-  async function tickPolling(taskId, shouldDownload = true) {
+  async function tickPolling(taskId, shouldDownload = true, updateCurrentTask = true) {
     try {
-      await refreshTask(taskId, shouldDownload);
-      pollErrorCountRef.current = 0;
+      await refreshTask(taskId, shouldDownload, updateCurrentTask);
+      pollErrorCountsRef.current.set(taskId, 0);
     } catch (error) {
-      pollErrorCountRef.current += 1;
-      if (pollErrorCountRef.current >= POLL_ERROR_RETRY_LIMIT) {
-        stopPolling(false);
-        setBusy(false);
-        setMessage(`任务轮询暂时中断，但上游任务可能仍在继续。稍后会自动恢复，或在任务历史中手动打开该任务。原因：${error.message}`);
+      const nextErrorCount = (pollErrorCountsRef.current.get(taskId) || 0) + 1;
+      pollErrorCountsRef.current.set(taskId, nextErrorCount);
+      if (nextErrorCount >= POLL_ERROR_RETRY_LIMIT) {
+        stopPolling(taskId, false);
+        if (updateCurrentTask) {
+          setMessage(`任务轮询暂时中断，但上游任务可能仍在继续。稍后会自动恢复，或在任务历史中手动打开该任务。原因：${error.message}`);
+        }
       }
     }
   }
 
-  function startPolling(taskId, shouldDownload = true) {
+  function startPolling(taskId, shouldDownload = true, updateCurrentTask = true) {
     if (!taskId) return;
-    stopPolling(false);
-    pollTaskIdRef.current = taskId;
-    pollErrorCountRef.current = 0;
-    setActiveTaskId(taskId);
-    setBusy(true);
-    tickPolling(taskId, shouldDownload);
-    pollRef.current = window.setInterval(() => {
-      tickPolling(taskId, shouldDownload);
+    stopPolling(taskId, false);
+    pollErrorCountsRef.current.set(taskId, 0);
+    addActiveTaskId(taskId);
+    tickPolling(taskId, shouldDownload, updateCurrentTask);
+    const pollRef = window.setInterval(() => {
+      tickPolling(taskId, shouldDownload, updateCurrentTask);
     }, Number(config.pollIntervalMs || 5000));
+    pollRefs.current.set(taskId, pollRef);
   }
 
   async function handleUpload(kind, fileList) {
@@ -649,7 +681,6 @@ export default function App() {
     setVideoFile(null);
     setTask(null);
     setSubmittedPayload(null);
-    if (pollRef.current) window.clearInterval(pollRef.current);
 
     try {
       const payload = {
@@ -664,6 +695,7 @@ export default function App() {
       setSubmittedPayload(data.payload);
       await loadTasks();
       startPolling(data.task.id, true);
+      setBusy(false);
     } catch (error) {
       setMessage(error.message);
       setBusy(false);
@@ -675,12 +707,12 @@ export default function App() {
     setVideoFile(null);
     setSubmittedPayload(record.payload || null);
     try {
-      await refreshTask(record.taskId, false);
+      await refreshTask(record.taskId, false, true);
       if (canPreviewStatus(record.status)) {
         await loadVideoAccess(record.taskId);
       }
       if (isPollingStatus(record.status)) {
-        startPolling(record.taskId, true);
+        startPolling(record.taskId, true, true);
       }
     } catch (error) {
       setMessage(error.message);
@@ -700,22 +732,32 @@ export default function App() {
   useEffect(() => {
     if (!currentUser || !taskHistory.length) return;
 
-    const activeTaskId = window.localStorage.getItem(getActiveTaskStorageKey(currentUser.id)) || "";
-    const resumableTask = taskHistory.find((item) => item.taskId === activeTaskId)
-      || taskHistory.find((item) => isPollingStatus(item.status));
+    const activeTaskIds = getActiveTaskIds(currentUser.id);
+    const resumableTasks = taskHistory.filter((item) => (
+      activeTaskIds.includes(item.taskId) || isPollingStatus(item.status)
+    ));
 
-    if (!resumableTask) return;
-    if (pollTaskIdRef.current === resumableTask.taskId && pollRef.current) return;
-
-    setTask(resumableTask.task || { id: resumableTask.taskId, status: resumableTask.status, progress: resumableTask.progress });
-    setSubmittedPayload(resumableTask.payload || null);
-    if (canPreviewStatus(resumableTask.status)) {
-      loadVideoAccess(resumableTask.taskId).catch(() => {});
-    } else {
-      setVideoFile(null);
+    if (!resumableTasks.length) return;
+    const visibleTask = task?.id ? null : resumableTasks[0];
+    if (visibleTask) {
+      setTask(visibleTask.task || { id: visibleTask.taskId, status: visibleTask.status, progress: visibleTask.progress });
+      setSubmittedPayload(visibleTask.payload || null);
+      if (canPreviewStatus(visibleTask.status)) {
+        loadVideoAccess(visibleTask.taskId).catch(() => {});
+      } else {
+        setVideoFile(null);
+      }
     }
-    startPolling(resumableTask.taskId, true);
-    setMessage(`已恢复任务 ${resumableTask.taskId} 的轮询。`);
+
+    const newlyResumed = [];
+    for (const resumableTask of resumableTasks) {
+      if (pollRefs.current.has(resumableTask.taskId)) continue;
+      startPolling(resumableTask.taskId, true, visibleTask?.taskId === resumableTask.taskId);
+      newlyResumed.push(resumableTask.taskId);
+    }
+    if (newlyResumed.length) {
+      setMessage(`已恢复 ${newlyResumed.length} 个任务的轮询。`);
+    }
   }, [currentUser, taskHistory, config.pollIntervalMs]);
 
   if (authLoading) {
@@ -985,7 +1027,7 @@ export default function App() {
 
           <button className="primary-button" onClick={createVideo} disabled={!canSubmit}>
             {busy ? <Icon name="◐" className="spin" size={19} /> : <Icon name="▶" size={19} />}
-            {busy ? "任务运行中" : "创建并轮询视频"}
+            {busy ? "提交中" : "创建并轮询视频"}
           </button>
         </section>
 
