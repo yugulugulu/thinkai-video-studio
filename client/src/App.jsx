@@ -157,6 +157,33 @@ function getReferenceToken(kind, index) {
   return `@${getReferenceLabel(kind, index)}`;
 }
 
+function renderPromptHighlight(value) {
+  if (!value) return null;
+
+  const tokenPattern = /(@(?:参考图|参考视频|音频)\d+)/g;
+  const nodes = [];
+  let lastIndex = 0;
+  let match;
+
+  while ((match = tokenPattern.exec(value)) !== null) {
+    if (match.index > lastIndex) {
+      nodes.push(value.slice(lastIndex, match.index));
+    }
+    nodes.push(
+      <span className="prompt-reference-token" key={`${match[0]}-${match.index}`}>
+        {match[0]}
+      </span>
+    );
+    lastIndex = match.index + match[0].length;
+  }
+
+  if (lastIndex < value.length) {
+    nodes.push(value.slice(lastIndex));
+  }
+
+  return nodes;
+}
+
 function createReferenceBindings(formValue) {
   return ["image", "video", "audio"].flatMap((kind) => {
     const fieldName = FIELD_CONFIG[kind].field;
@@ -274,6 +301,26 @@ function getActiveMention(value, caret) {
       end: caret
     }
   };
+}
+
+function VideoAssetPreview({ asset }) {
+  if (!asset?.url) return <Icon name="▶" size={22} />;
+
+  return (
+    <video
+      src={asset.url}
+      muted
+      playsInline
+      preload="metadata"
+      aria-label={asset.filename}
+      onLoadedMetadata={(event) => {
+        const video = event.currentTarget;
+        if (Number.isFinite(video.duration) && video.duration > 0.2) {
+          video.currentTime = 0.1;
+        }
+      }}
+    />
+  );
 }
 
 function ReferencePanel({
@@ -403,6 +450,10 @@ function ReferencePanel({
                         <div className="asset-library-thumb">
                           <img src={asset.url} alt={asset.filename} loading="lazy" />
                         </div>
+                      ) : kind === "video" && asset.url ? (
+                        <div className="asset-library-thumb video-thumb">
+                          <VideoAssetPreview asset={asset} />
+                        </div>
                       ) : (
                         <div className="asset-library-kind">
                           <Icon name={kind === "video" ? "▶" : "♪"} size={22} />
@@ -491,6 +542,7 @@ export default function App() {
   const videoAccessRef = useRef({ taskId: "", file: null });
   const activeUserIdRef = useRef("");
   const promptInputRef = useRef(null);
+  const promptHighlightRef = useRef(null);
   const lastPromptSelectionRef = useRef(null);
 
   const selectedModel = useMemo(
@@ -916,10 +968,17 @@ export default function App() {
       start: input.selectionStart,
       end: input.selectionEnd
     };
+    syncPromptHighlightScroll(input);
     const activeMention = getActiveMention(input.value, input.selectionStart);
     setMentionMenu(activeMention
       ? { open: true, query: activeMention.query, range: activeMention.range }
       : { open: false, query: "", range: null });
+  }
+
+  function syncPromptHighlightScroll(input = promptInputRef.current) {
+    if (!input || !promptHighlightRef.current) return;
+    promptHighlightRef.current.scrollTop = input.scrollTop;
+    promptHighlightRef.current.scrollLeft = input.scrollLeft;
   }
 
   function closeMentionMenu() {
@@ -1351,6 +1410,9 @@ export default function App() {
               <span className={`counter ${promptTooLong ? "invalid" : ""}`}>{promptLength}/{PROMPT_MAX_LENGTH}</span>
             </span>
             <div className="prompt-editor">
+              <div className="prompt-highlight" ref={promptHighlightRef} aria-hidden="true">
+                {renderPromptHighlight(form.prompt)}
+              </div>
               <textarea
                 ref={promptInputRef}
                 value={form.prompt}
@@ -1362,6 +1424,7 @@ export default function App() {
                   setForm((current) => ({ ...current, prompt: nextPrompt }));
                   updateMentionMenuFromInput(event.target);
                 }}
+                onScroll={(event) => syncPromptHighlightScroll(event.target)}
                 onClick={(event) => updateMentionMenuFromInput(event.target)}
                 onKeyUp={(event) => {
                   if (event.key !== "Escape") updateMentionMenuFromInput(event.target);
