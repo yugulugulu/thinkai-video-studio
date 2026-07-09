@@ -491,6 +491,7 @@ export default function App() {
   const videoAccessRef = useRef({ taskId: "", file: null });
   const activeUserIdRef = useRef("");
   const promptInputRef = useRef(null);
+  const lastPromptSelectionRef = useRef(null);
 
   const selectedModel = useMemo(
     () => models.find((model) => model.id === form.model) || models[0],
@@ -532,16 +533,22 @@ export default function App() {
     audio: assets.filter((item) => item.kind === "audio")
   }), [assets]);
 
-  const mentionImageOptions = useMemo(() => {
+  const mentionOptions = useMemo(() => {
     const query = mentionMenu.query.trim().toLowerCase();
-    return form.images
-      .filter((asset, index) => {
+    return ["image", "video", "audio"].flatMap((kind) => {
+      const fieldName = FIELD_CONFIG[kind].field;
+      return form[fieldName].map((asset, index) => ({
+        kind,
+        asset,
+        token: getReferenceToken(kind, index + 1)
+      }));
+    })
+      .filter(({ asset, token }) => {
         const filename = String(asset.filename || "").toLowerCase();
-        const token = getReferenceToken("image", index + 1).toLowerCase();
-        return !query || filename.includes(query) || token.includes(query);
+        return !query || filename.includes(query) || token.toLowerCase().includes(query);
       })
       .slice(0, 8);
-  }, [form.images, mentionMenu.query]);
+  }, [form.images, form.videos, form.audios, mentionMenu.query]);
 
   useEffect(() => {
     if (!selectedModel) return;
@@ -896,7 +903,8 @@ export default function App() {
 
   function getPromptSelection() {
     const input = promptInputRef.current;
-    if (!input || document.activeElement !== input) return null;
+    if (!input) return lastPromptSelectionRef.current;
+    if (document.activeElement !== input) return lastPromptSelectionRef.current;
     return {
       start: input.selectionStart,
       end: input.selectionEnd
@@ -904,6 +912,10 @@ export default function App() {
   }
 
   function updateMentionMenuFromInput(input) {
+    lastPromptSelectionRef.current = {
+      start: input.selectionStart,
+      end: input.selectionEnd
+    };
     const activeMention = getActiveMention(input.value, input.selectionStart);
     setMentionMenu(activeMention
       ? { open: true, query: activeMention.query, range: activeMention.range }
@@ -954,8 +966,8 @@ export default function App() {
     });
   }
 
-  function selectMentionImage(asset) {
-    insertAssetMention("image", asset, { selection: mentionMenu.range });
+  function selectMentionAsset(kind, asset) {
+    insertAssetMention(kind, asset, { selection: mentionMenu.range });
   }
 
   async function createVideo() {
@@ -1364,28 +1376,28 @@ export default function App() {
               {mentionMenu.open && (
                 <div className="mention-menu">
                   <div className="mention-menu-head">
-                    <strong>选择参考图</strong>
-                    <span>{mentionImageOptions.length ? "点击插入引用" : "暂无可引用图片"}</span>
+                    <strong>选择参考素材</strong>
+                    <span>{mentionOptions.length ? "点击插入引用" : "暂无可引用素材"}</span>
                   </div>
-                  {mentionImageOptions.length === 0 ? (
-                    <p className="mention-empty">先在参考图片里加入素材，或换一个关键词。</p>
+                  {mentionOptions.length === 0 ? (
+                    <p className="mention-empty">先在右侧参考图片、视频或音频里加入素材，或换一个关键词。</p>
                   ) : (
                     <div className="mention-list">
-                      {mentionImageOptions.map((asset) => {
-                        const selectedIndex = form.images.findIndex((item) => getAssetKey(item) === getAssetKey(asset));
-                        const token = selectedIndex >= 0
-                          ? getReferenceToken("image", selectedIndex + 1)
-                          : `@${FIELD_CONFIG.image.referenceLabel}${form.images.length + 1}`;
+                      {mentionOptions.map(({ kind, asset, token }) => {
                         return (
                           <button
                             type="button"
                             className="mention-option"
-                            key={`mention-${asset.id || asset.url}`}
+                            key={`mention-${kind}-${asset.id || asset.url}`}
                             onMouseDown={(event) => event.preventDefault()}
-                            onClick={() => selectMentionImage(asset)}
+                            onClick={() => selectMentionAsset(kind, asset)}
                           >
                             <span className="mention-thumb">
-                              <img src={asset.url} alt={asset.filename} loading="lazy" />
+                              {kind === "image" && asset.url ? (
+                                <img src={asset.url} alt={asset.filename} loading="lazy" />
+                              ) : (
+                                <Icon name={kind === "video" ? "▶" : "♪"} size={20} />
+                              )}
                             </span>
                             <span className="mention-copy">
                               <strong>{token}</strong>
