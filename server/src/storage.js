@@ -66,6 +66,7 @@ function sanitizeTaskRow(row) {
     progress: Number(row.progress || 0),
     model: row.model || "",
     payload: row.payload || null,
+    memory: row.memory || null,
     task: row.task || null,
     file: row.file || null,
     createdAt: row.created_at,
@@ -84,7 +85,7 @@ export async function readTasks(userId) {
 
   params.push(100);
   const result = await query(
-    `SELECT user_id, task_id, client_task_id, status, progress, model, payload, task, file, created_at, updated_at
+    `SELECT user_id, task_id, client_task_id, status, progress, model, payload, memory, task, file, created_at, updated_at
      FROM video_tasks
      ${whereClause}
      ORDER BY updated_at DESC
@@ -105,7 +106,7 @@ export async function getTaskRecord(taskId, userId) {
   }
 
   const result = await query(
-    `SELECT user_id, task_id, client_task_id, status, progress, model, payload, task, file, created_at, updated_at
+    `SELECT user_id, task_id, client_task_id, status, progress, model, payload, memory, task, file, created_at, updated_at
      FROM video_tasks
      WHERE task_id = $1
      ${userClause}
@@ -118,7 +119,7 @@ export async function getTaskRecord(taskId, userId) {
 
 export async function upsertTaskRecord(record) {
   const existing = await query(
-    `SELECT user_id, task_id, client_task_id, status, progress, model, payload, task, file, created_at, updated_at
+    `SELECT user_id, task_id, client_task_id, status, progress, model, payload, memory, task, file, created_at, updated_at
      FROM video_tasks
      WHERE task_id = $1`,
     [record.taskId]
@@ -141,8 +142,8 @@ export async function upsertTaskRecord(record) {
   };
 
   const result = await query(
-    `INSERT INTO video_tasks (user_id, task_id, client_task_id, status, progress, model, payload, task, file, created_at, updated_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb, $10::timestamptz, $11::timestamptz)
+    `INSERT INTO video_tasks (user_id, task_id, client_task_id, status, progress, model, payload, memory, task, file, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb, $11::timestamptz, $12::timestamptz)
      ON CONFLICT (task_id)
      DO UPDATE SET
        user_id = EXCLUDED.user_id,
@@ -151,10 +152,11 @@ export async function upsertTaskRecord(record) {
        progress = EXCLUDED.progress,
        model = EXCLUDED.model,
        payload = EXCLUDED.payload,
+       memory = EXCLUDED.memory,
        task = EXCLUDED.task,
        file = EXCLUDED.file,
        updated_at = EXCLUDED.updated_at
-     RETURNING user_id, task_id, client_task_id, status, progress, model, payload, task, file, created_at, updated_at`,
+     RETURNING user_id, task_id, client_task_id, status, progress, model, payload, memory, task, file, created_at, updated_at`,
     [
       nextRecord.userId,
       nextRecord.taskId,
@@ -163,6 +165,7 @@ export async function upsertTaskRecord(record) {
       Number(nextRecord.progress || 0),
       nextRecord.model || null,
       JSON.stringify(nextRecord.payload || null),
+      JSON.stringify(nextRecord.memory || null),
       JSON.stringify(nextRecord.task || null),
       JSON.stringify(nextRecord.file || null),
       nextRecord.createdAt,

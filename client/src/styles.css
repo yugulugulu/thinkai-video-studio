@@ -1443,6 +1443,45 @@ pre {
   font-size: 12px;
 }
 
+.memory-preview {
+  display: grid;
+  gap: 10px;
+  margin-top: 18px;
+  padding: 12px;
+  border: 1px solid rgba(0, 113, 227, 0.12);
+  border-radius: var(--radius-lg);
+  background: rgba(0, 113, 227, 0.045);
+}
+
+.memory-preview p {
+  max-height: 96px;
+  margin: 0;
+  color: var(--muted-strong);
+  font-size: 12px;
+  line-height: 1.55;
+  overflow: auto;
+  overflow-wrap: anywhere;
+}
+
+.memory-reference-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.memory-reference-chip {
+  max-width: 100%;
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--blue-deep);
+  font-size: 11px;
+  font-weight: 760;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .spin {
   animation: spin 900ms linear infinite;
 }

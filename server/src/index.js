@@ -227,6 +227,43 @@ async function buildTaskAccessPayload(file) {
   };
 }
 
+function normalizeTaskMemory(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const references = value.references && typeof value.references === "object" && !Array.isArray(value.references)
+    ? value.references
+    : {};
+  const cleanAssets = (items, kind) => {
+    if (!Array.isArray(items)) return [];
+    return items.slice(0, kind === "image" ? 9 : 3).map((item) => ({
+      id: item?.id || null,
+      kind,
+      filename: String(item?.filename || "").slice(0, 260),
+      url: String(item?.url || ""),
+      sizeBytes: Number(item?.sizeBytes || 0),
+      mimeType: String(item?.mimeType || ""),
+      createdAt: item?.createdAt || null
+    })).filter((item) => item.url);
+  };
+
+  const duration = Number(value.duration || 0);
+  return {
+    editorPrompt: String(value.editorPrompt || "").slice(0, 6000),
+    submittedPrompt: String(value.submittedPrompt || "").slice(0, 6000),
+    model: String(value.model || ""),
+    aspect_ratio: String(value.aspect_ratio || ""),
+    duration: Number.isFinite(duration) ? duration : 0,
+    resolution: String(value.resolution || ""),
+    references: {
+      images: cleanAssets(references.images, "image"),
+      videos: cleanAssets(references.videos, "video"),
+      audios: cleanAssets(references.audios, "audio")
+    }
+  };
+}
+
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true });
 });
@@ -341,6 +378,7 @@ app.post("/api/videos", requireAuth, async (req, res) => {
     }
 
     const input = validateCreatePayload(req.body);
+    const memory = normalizeTaskMemory(req.body.memory);
     const references = buildReferences(input);
     const clientTaskId = input.clientTaskId || `local_${Date.now()}_${nanoid(6)}`;
     const payload = {
@@ -363,6 +401,7 @@ app.post("/api/videos", requireAuth, async (req, res) => {
       progress: task.progress,
       model: payload.model,
       payload,
+      memory,
       task
     });
     res.json({ task, payload });

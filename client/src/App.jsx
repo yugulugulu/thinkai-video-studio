@@ -170,6 +170,77 @@ function createReferenceBindings(formValue) {
   });
 }
 
+function cloneMemoryAsset(asset, kind) {
+  return {
+    id: asset?.id || null,
+    kind,
+    filename: asset?.filename || asset?.url || `${kind} reference`,
+    url: asset?.url || "",
+    sizeBytes: Number(asset?.sizeBytes || 0),
+    mimeType: asset?.mimeType || "",
+    createdAt: asset?.createdAt || null
+  };
+}
+
+function buildTaskMemory(formValue, submittedPrompt) {
+  return {
+    editorPrompt: formValue.prompt,
+    submittedPrompt,
+    model: formValue.model,
+    aspect_ratio: formValue.aspect_ratio,
+    duration: Number(formValue.duration),
+    resolution: formValue.resolution,
+    references: {
+      images: formValue.images.map((asset) => cloneMemoryAsset(asset, "image")),
+      videos: formValue.videos.map((asset) => cloneMemoryAsset(asset, "video")),
+      audios: formValue.audios.map((asset) => cloneMemoryAsset(asset, "audio"))
+    }
+  };
+}
+
+function assetsFromPayloadUrls(urls, kind) {
+  if (!Array.isArray(urls)) return [];
+  return urls.filter(Boolean).map((url, index) => ({
+    id: null,
+    kind,
+    filename: `${FIELD_CONFIG[kind].referenceLabel}${index + 1}`,
+    url,
+    sizeBytes: 0,
+    mimeType: "",
+    createdAt: null
+  }));
+}
+
+function getReusableTaskMemory(record) {
+  if (record?.memory) return record.memory;
+
+  const payload = record?.payload || {};
+  const references = payload.references || {};
+  const images = references.images || (references.image ? [references.image] : payload.images || []);
+  const videos = references.videos || (references.video ? [references.video] : payload.videos || []);
+  const audios = references.audios || (references.audio ? [references.audio] : payload.audios || []);
+
+  return {
+    editorPrompt: payload.prompt || "",
+    submittedPrompt: payload.prompt || "",
+    model: payload.model || record?.model || defaultForm.model,
+    aspect_ratio: payload.aspect_ratio || defaultForm.aspect_ratio,
+    duration: Number(payload.duration || defaultForm.duration),
+    resolution: payload.resolution || defaultForm.resolution,
+    references: {
+      images: assetsFromPayloadUrls(images, "image"),
+      videos: assetsFromPayloadUrls(videos, "video"),
+      audios: assetsFromPayloadUrls(audios, "audio")
+    }
+  };
+}
+
+function countMemoryReferences(memory) {
+  return ["images", "videos", "audios"].reduce((count, key) => (
+    count + (Array.isArray(memory?.references?.[key]) ? memory.references[key].length : 0)
+  ), 0);
+}
+
 function buildPromptWithReferenceTokens(formValue) {
   return createReferenceBindings(formValue).reduce((prompt, binding) => (
     prompt.replace(new RegExp(escapeRegExp(binding.token), "g"), `[${binding.label}]`)
@@ -405,6 +476,7 @@ export default function App() {
   const [authMessage, setAuthMessage] = useState("");
   const [task, setTask] = useState(null);
   const [submittedPayload, setSubmittedPayload] = useState(null);
+  const [submittedMemory, setSubmittedMemory] = useState(null);
   const [videoFile, setVideoFile] = useState(null);
   const [message, setMessage] = useState("");
   const [taskHistory, setTaskHistory] = useState([]);
@@ -498,6 +570,7 @@ export default function App() {
   function clearTaskViewState() {
     setTask(null);
     setSubmittedPayload(null);
+    setSubmittedMemory(null);
     setVideoFile(null);
     setTaskHistory([]);
     setAssets([]);
@@ -897,19 +970,23 @@ export default function App() {
     setVideoFile(null);
     setTask(null);
     setSubmittedPayload(null);
+    setSubmittedMemory(null);
 
     try {
+      const memory = buildTaskMemory(form, promptForSubmit);
       const payload = {
         ...form,
         prompt: promptForSubmit,
         duration: Number(form.duration),
         images: form.images.map((item) => item.url),
         videos: form.videos.map((item) => item.url),
-        audios: form.audios.map((item) => item.url)
+        audios: form.audios.map((item) => item.url),
+        memory
       };
       const data = await api.createVideo(payload);
       setTask(data.task);
       setSubmittedPayload(data.payload);
+      setSubmittedMemory(memory);
       await loadTasks();
       startPolling(data.task.id, true);
       setBusy(false);
@@ -923,6 +1000,7 @@ export default function App() {
     setMessage("");
     setVideoFile(null);
     setSubmittedPayload(record.payload || null);
+    setSubmittedMemory(getReusableTaskMemory(record));
     try {
       await refreshTask(record.taskId, false, true);
       if (canPreviewStatus(record.status)) {
@@ -946,6 +1024,38 @@ export default function App() {
     }
   }
 
+  function reuseHistoryTask(record) {
+    const memory = getReusableTaskMemory(record);
+    const nextModel = models.some((model) => model.id === memory.model) ? memory.model : defaultForm.model;
+    const modelConfig = models.find((model) => model.id === nextModel) || selectedModel;
+    const nextImages = (memory.references?.images || []).filter((asset) => asset.url);
+    const nextVideos = modelConfig?.supportsVideoReference
+      ? (memory.references?.videos || []).filter((asset) => asset.url)
+      : [];
+    const nextAudios = (memory.references?.audios || []).filter((asset) => asset.url);
+    const nextResolution = modelConfig?.resolutions?.includes(memory.resolution)
+      ? memory.resolution
+      : modelConfig?.resolutions?.[0] || defaultForm.resolution;
+    const recalledAssets = [...nextImages, ...nextVideos, ...nextAudios];
+
+    setForm({
+      model: nextModel,
+      prompt: memory.editorPrompt || memory.submittedPrompt || "",
+      aspect_ratio: ["16:9", "9:16"].includes(memory.aspect_ratio) ? memory.aspect_ratio : defaultForm.aspect_ratio,
+      duration: Number.isFinite(Number(memory.duration)) && Number(memory.duration) > 0 ? Number(memory.duration) : defaultForm.duration,
+      resolution: nextResolution,
+      images: nextImages,
+      videos: nextVideos,
+      audios: nextAudios,
+      client_task_id: ""
+    });
+    setAssets((current) => mergeAssets(current, recalledAssets));
+    setSubmittedPayload(record.payload || null);
+    setSubmittedMemory(memory);
+    setMessage("已复用历史任务的提示词和参考素材，可继续补镜头。");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
   useEffect(() => {
     if (!currentUser || !taskHistory.length) return;
 
@@ -959,6 +1069,7 @@ export default function App() {
     if (visibleTask) {
       setTask(visibleTask.task || { id: visibleTask.taskId, status: visibleTask.status, progress: visibleTask.progress });
       setSubmittedPayload(visibleTask.payload || null);
+      setSubmittedMemory(getReusableTaskMemory(visibleTask));
       if (canPreviewStatus(visibleTask.status)) {
         loadVideoAccess(visibleTask.taskId).catch(() => {});
       } else {
@@ -1154,6 +1265,24 @@ export default function App() {
               </div>
             )}
             {submittedPayload && <pre>{JSON.stringify(submittedPayload, null, 2)}</pre>}
+            {submittedMemory && (
+              <div className="memory-preview">
+                <div className="asset-group-head">
+                  <strong>任务记忆</strong>
+                  <span>{countMemoryReferences(submittedMemory)} 个参考素材</span>
+                </div>
+                <p>{submittedMemory.editorPrompt || submittedMemory.submittedPrompt || "未保存提示词"}</p>
+                <div className="memory-reference-list">
+                  {["images", "videos", "audios"].flatMap((key) => (
+                    (submittedMemory.references?.[key] || []).map((asset) => (
+                      <span className="memory-reference-chip" key={`${key}-${asset.id || asset.url}`}>
+                        {asset.filename || asset.url}
+                      </span>
+                    ))
+                  ))}
+                </div>
+              </div>
+            )}
 
             <div className="history-section">
               <div className="history-head">
@@ -1181,6 +1310,9 @@ export default function App() {
                         <code>{record.taskId}</code>
                       </button>
                       <div className="history-actions">
+                        <button className="mini-link" onClick={() => reuseHistoryTask(record)}>
+                          复用
+                        </button>
                         <button className="mini-link" onClick={() => downloadHistoryTask(record)} disabled={!canPreviewStatus(record.status)}>
                           下载
                         </button>

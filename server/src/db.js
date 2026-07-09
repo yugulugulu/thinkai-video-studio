@@ -77,11 +77,17 @@ export async function initDatabase() {
       progress DOUBLE PRECISION NOT NULL DEFAULT 0,
       model TEXT,
       payload JSONB,
+      memory JSONB,
       task JSONB,
       file JSONB,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
+  `);
+
+  await pool.query(`
+    ALTER TABLE video_tasks
+    ADD COLUMN IF NOT EXISTS memory JSONB
   `);
 
   await pool.query(`
