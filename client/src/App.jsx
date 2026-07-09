@@ -33,6 +33,7 @@ const POLL_ERROR_RETRY_LIMIT = 6;
 const FIELD_CONFIG = {
   image: {
     field: "images",
+    referenceLabel: "参考图",
     label: "参考图片",
     uploadLabel: "上传图片",
     accept: "image/*",
@@ -43,6 +44,7 @@ const FIELD_CONFIG = {
   },
   video: {
     field: "videos",
+    referenceLabel: "参考视频",
     label: "参考视频",
     uploadLabel: "上传视频",
     accept: "video/*",
@@ -52,6 +54,7 @@ const FIELD_CONFIG = {
   },
   audio: {
     field: "audios",
+    referenceLabel: "音频",
     label: "参考音频",
     uploadLabel: "上传音频",
     accept: "audio/*",
@@ -138,8 +141,73 @@ function isVideoAccessExpired(file) {
   return expiresAt <= Date.now() + 60 * 1000;
 }
 
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function getAssetKey(asset) {
+  return String(asset?.id || asset?.url || "");
+}
+
+function getReferenceLabel(kind, index) {
+  return `${FIELD_CONFIG[kind].referenceLabel}${index}`;
+}
+
+function getReferenceToken(kind, index) {
+  return `@${getReferenceLabel(kind, index)}`;
+}
+
+function createReferenceBindings(formValue) {
+  return ["image", "video", "audio"].flatMap((kind) => {
+    const fieldName = FIELD_CONFIG[kind].field;
+    return formValue[fieldName].map((asset, index) => ({
+      kind,
+      asset,
+      index: index + 1,
+      label: getReferenceLabel(kind, index + 1),
+      token: getReferenceToken(kind, index + 1)
+    }));
+  });
+}
+
+function buildPromptWithReferenceTokens(formValue) {
+  return createReferenceBindings(formValue).reduce((prompt, binding) => (
+    prompt.replace(new RegExp(escapeRegExp(binding.token), "g"), `[${binding.label}]`)
+  ), formValue.prompt.trim());
+}
+
+function insertTextAtSelection(source, insertion, selection) {
+  const start = Number.isInteger(selection?.start) ? selection.start : source.length;
+  const end = Number.isInteger(selection?.end) ? selection.end : start;
+  const needsLeadingSpace = start > 0 && !/\s/.test(source[start - 1]);
+  const needsTrailingSpace = end < source.length && !/\s/.test(source[end]);
+  const text = `${needsLeadingSpace ? " " : ""}${insertion}${needsTrailingSpace ? " " : ""}`;
+  return {
+    value: `${source.slice(0, start)}${text}${source.slice(end)}`,
+    caret: start + text.length
+  };
+}
+
+function getActiveMention(value, caret) {
+  const beforeCaret = value.slice(0, caret);
+  const atIndex = beforeCaret.lastIndexOf("@");
+  if (atIndex < 0) return null;
+
+  const query = beforeCaret.slice(atIndex + 1);
+  if (/\s/.test(query)) return null;
+
+  return {
+    query,
+    range: {
+      start: atIndex,
+      end: caret
+    }
+  };
+}
+
 function ReferencePanel({
   config,
+  kind,
   selected,
   library,
   disabled,
@@ -148,98 +216,164 @@ function ReferencePanel({
   modelWarning,
   onUpload,
   onAdd,
+  onMention,
   onRemove
 }) {
   const showImagePreview = config.field === "images";
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  const title = `${config.label}最近上传`;
 
   return (
-    <label className="asset-panel">
-      <span className="field-top">
-        <span>{config.label}</span>
-        <span className={`counter ${invalid ? "invalid" : ""}`}>{selected.length}/{config.maxCount}</span>
-      </span>
+    <>
+      <section className={`asset-panel ${invalid ? "invalid" : ""}`}>
+        <span className="field-top">
+          <span>{config.label}</span>
+          <span className={`counter ${invalid ? "invalid" : ""}`}>{selected.length}/{config.maxCount}</span>
+        </span>
 
-      <div className={`upload-dropzone ${invalid ? "invalid" : ""} ${disabled ? "disabled" : ""}`}>
-        <input
-          type="file"
-          multiple
-          accept={config.accept}
-          disabled={disabled || loading}
-          onChange={(event) => {
-            onUpload(event.target.files);
-            event.target.value = "";
-          }}
-        />
-        <span>{loading ? "上传中..." : config.uploadLabel}</span>
-        <small>{config.emptyHint}</small>
-      </div>
-
-      <span className="field-hint">
-        {modelWarning || config.optionalHint}
-      </span>
-
-      <div className="asset-group">
-        <div className="asset-group-head">
-          <strong>当前任务已选</strong>
-          <span>{selected.length}</span>
+        <div className="asset-tool-row">
+          <label className={`asset-tool-button upload-action ${disabled || loading ? "disabled" : ""}`}>
+            <input
+              type="file"
+              multiple
+              accept={config.accept}
+              disabled={disabled || loading}
+              onChange={(event) => {
+                onUpload(event.target.files);
+                event.target.value = "";
+              }}
+            />
+            <span>{loading ? "上传中..." : config.uploadLabel}</span>
+            <small>{config.emptyHint}</small>
+          </label>
+          <button
+            type="button"
+            className={`asset-tool-button recent-action ${libraryOpen ? "active" : ""}`}
+            onClick={() => setLibraryOpen(true)}
+          >
+            <span>最近上传</span>
+            <small>{library.length} 个素材</small>
+          </button>
         </div>
-        {selected.length === 0 ? (
-          <p className="empty-history">还没有选择素材。</p>
-        ) : (
-          <div className="asset-list">
-            {selected.map((asset) => (
-              <div className="asset-item" key={`selected-${asset.id || asset.url}`}>
-                <div className="asset-meta">
-                  <strong>{asset.filename}</strong>
-                  <small>{formatBytes(asset.sizeBytes)} · {formatTime(asset.createdAt)}</small>
-                  <a href={asset.url} target="_blank" rel="noreferrer">{asset.url}</a>
-                </div>
-                <button type="button" className="mini-button" onClick={() => onRemove(asset)}>
-                  移除
-                </button>
-              </div>
-            ))}
+
+        <span className="field-hint">
+          {modelWarning || config.optionalHint}
+        </span>
+
+        <div className="asset-group">
+          <div className="asset-group-head">
+            <strong>当前任务已选</strong>
+            <span>{selected.length}</span>
           </div>
-        )}
-      </div>
-
-      <div className="asset-group">
-        <div className="asset-group-head">
-          <strong>最近上传</strong>
-          <span>{library.length}</span>
-        </div>
-        {library.length === 0 ? (
-          <p className="empty-history">还没有上传过这类素材。</p>
-        ) : (
-          <div className="asset-list compact">
-            {library.map((asset) => {
-              const active = selected.some((item) => String(item.id) === String(asset.id));
-              return (
-                <div className="asset-item" key={`library-${asset.id}`}>
-                  {showImagePreview && asset.url ? (
-                    <div className="asset-thumb">
-                      <img src={asset.url} alt={asset.filename} loading="lazy" />
-                    </div>
-                  ) : null}
+          {selected.length === 0 ? (
+            <p className="empty-history">还没有选择素材。</p>
+          ) : (
+            <div className="asset-list">
+              {selected.map((asset, index) => (
+                <div className="asset-item" key={`selected-${asset.id || asset.url}`}>
                   <div className="asset-meta">
-                    <strong>{asset.filename}</strong>
+                    <strong>
+                      <span className="reference-token">{getReferenceToken(kind, index + 1)}</span>
+                      {asset.filename}
+                    </strong>
                     <small>{formatBytes(asset.sizeBytes)} · {formatTime(asset.createdAt)}</small>
                   </div>
-                  <button
-                    type="button"
-                    className="mini-button"
-                    onClick={() => onAdd(asset)}
-                    disabled={disabled || active}
-                  >
-                    {active ? "已使用" : "加入"}
-                  </button>
+                  <div className="asset-actions">
+                    <button
+                      type="button"
+                      className="mini-button mention-button"
+                      onClick={(event) => {
+                        event.preventDefault();
+                        onMention(asset);
+                      }}
+                    >
+                      @
+                    </button>
+                    <button
+                      type="button"
+                      className="mini-button"
+                      onClick={(event) => {
+                        event.preventDefault();
+                        onRemove(asset);
+                      }}
+                    >
+                      移除
+                    </button>
+                  </div>
                 </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-    </label>
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
+
+      {libraryOpen && (
+        <div className="asset-library-backdrop" onClick={() => setLibraryOpen(false)}>
+          <section className="asset-library-dialog" onClick={(event) => event.stopPropagation()}>
+            <div className="asset-library-head">
+              <div>
+                <p className="eyebrow"><Icon name="▦" size={14} /> Library</p>
+                <h2>{title}</h2>
+              </div>
+              <button type="button" className="icon-button" onClick={() => setLibraryOpen(false)} aria-label="关闭">
+                <Icon name="×" size={18} />
+              </button>
+            </div>
+            <p className="asset-library-summary">{library.length} 个素材 · 选择素材后会加入当前任务</p>
+            {library.length === 0 ? (
+              <p className="empty-history">还没有上传过这类素材。</p>
+            ) : (
+              <div className={`asset-library-grid ${showImagePreview ? "image-grid" : ""}`}>
+                {library.map((asset) => {
+                  const active = selected.some((item) => String(item.id) === String(asset.id));
+                  return (
+                    <div className="asset-library-card" key={`library-${asset.id}`}>
+                      {showImagePreview && asset.url ? (
+                        <div className="asset-library-thumb">
+                          <img src={asset.url} alt={asset.filename} loading="lazy" />
+                        </div>
+                      ) : (
+                        <div className="asset-library-kind">
+                          <Icon name={kind === "video" ? "▶" : "♪"} size={22} />
+                        </div>
+                      )}
+                      <div className="asset-meta">
+                        <strong>{asset.filename}</strong>
+                        <small>{formatBytes(asset.sizeBytes)} · {formatTime(asset.createdAt)}</small>
+                      </div>
+                      <div className="asset-actions">
+                        <button
+                          type="button"
+                          className="mini-button"
+                          onClick={() => {
+                            onAdd(asset);
+                            setLibraryOpen(false);
+                          }}
+                          disabled={disabled || active}
+                        >
+                          {active ? "已使用" : "加入"}
+                        </button>
+                        <button
+                          type="button"
+                          className="mini-button mention-button"
+                          onClick={() => {
+                            onMention(asset);
+                            setLibraryOpen(false);
+                          }}
+                          disabled={disabled}
+                        >
+                          @
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -279,16 +413,21 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState({ image: false, video: false, audio: false });
+  const [mentionMenu, setMentionMenu] = useState({ open: false, query: "", range: null });
   const pollRefs = useRef(new Map());
   const pollErrorCountsRef = useRef(new Map());
   const videoAccessRef = useRef({ taskId: "", file: null });
   const activeUserIdRef = useRef("");
+  const promptInputRef = useRef(null);
 
   const selectedModel = useMemo(
     () => models.find((model) => model.id === form.model) || models[0],
     [models, form.model]
   );
   const promptLength = form.prompt.length;
+  const promptForSubmit = useMemo(() => buildPromptWithReferenceTokens(form), [form]);
+  const referenceBindings = useMemo(() => createReferenceBindings(form), [form]);
+  const promptForSubmitTooLong = promptForSubmit.length > PROMPT_MAX_LENGTH;
   const durationNumber = Number(form.duration);
   const durationInvalid = !Number.isFinite(durationNumber) || durationNumber < MIN_DURATION || durationNumber > MAX_DURATION;
   const promptTooLong = promptLength > PROMPT_MAX_LENGTH;
@@ -303,6 +442,7 @@ export default function App() {
     Boolean(form.prompt.trim()) &&
     !busy &&
     !promptTooLong &&
+    !promptForSubmitTooLong &&
     !durationInvalid &&
     !referencesMissing &&
     !referencesOverLimit &&
@@ -319,6 +459,17 @@ export default function App() {
     video: assets.filter((item) => item.kind === "video"),
     audio: assets.filter((item) => item.kind === "audio")
   }), [assets]);
+
+  const mentionImageOptions = useMemo(() => {
+    const query = mentionMenu.query.trim().toLowerCase();
+    return form.images
+      .filter((asset, index) => {
+        const filename = String(asset.filename || "").toLowerCase();
+        const token = getReferenceToken("image", index + 1).toLowerCase();
+        return !query || filename.includes(query) || token.includes(query);
+      })
+      .slice(0, 8);
+  }, [form.images, mentionMenu.query]);
 
   useEffect(() => {
     if (!selectedModel) return;
@@ -457,6 +608,7 @@ export default function App() {
   function getFormError() {
     if (!form.prompt.trim()) return "请输入 prompt";
     if (promptTooLong) return `Prompt 最长 ${PROMPT_MAX_LENGTH} 字符`;
+    if (promptForSubmitTooLong) return `注入引用后的 Prompt 最长 ${PROMPT_MAX_LENGTH} 字符`;
     if (durationInvalid) return `时长必须在 ${MIN_DURATION}-${MAX_DURATION} 秒之间`;
     if (referencesMissing) return `${selectedModel.id} 不支持纯文本生成，至少需要 1 张参考图片`;
     if (form.images.length > IMAGE_MAX_COUNT) return `参考图片最多 ${IMAGE_MAX_COUNT} 张`;
@@ -669,6 +821,70 @@ export default function App() {
     }));
   }
 
+  function getPromptSelection() {
+    const input = promptInputRef.current;
+    if (!input || document.activeElement !== input) return null;
+    return {
+      start: input.selectionStart,
+      end: input.selectionEnd
+    };
+  }
+
+  function updateMentionMenuFromInput(input) {
+    const activeMention = getActiveMention(input.value, input.selectionStart);
+    setMentionMenu(activeMention
+      ? { open: true, query: activeMention.query, range: activeMention.range }
+      : { open: false, query: "", range: null });
+  }
+
+  function closeMentionMenu() {
+    setMentionMenu({ open: false, query: "", range: null });
+  }
+
+  function insertAssetMention(kind, asset, options = {}) {
+    const fieldConfig = FIELD_CONFIG[kind];
+    const fieldName = fieldConfig.field;
+    if (kind === "video" && !selectedModel?.supportsVideoReference) {
+      setMessage(`${selectedModel.id} 不支持参考视频`);
+      return;
+    }
+
+    const selection = options.selection || getPromptSelection();
+    let nextCaret = null;
+    setMessage("");
+    closeMentionMenu();
+    setForm((current) => {
+      const nextAssets = dedupeAssets([...current[fieldName], asset]);
+      if (nextAssets.length > fieldConfig.maxCount) {
+        setMessage(`${fieldConfig.label} 当前任务最多 ${fieldConfig.maxCount} 条`);
+        return current;
+      }
+
+      const assetIndex = nextAssets.findIndex((item) => getAssetKey(item) === getAssetKey(asset));
+      const token = getReferenceToken(kind, assetIndex + 1);
+      const inserted = insertTextAtSelection(current.prompt, token, selection);
+      nextCaret = inserted.caret;
+      return {
+        ...current,
+        [fieldName]: nextAssets,
+        prompt: inserted.value
+      };
+    });
+
+    window.requestAnimationFrame(() => {
+      const input = promptInputRef.current;
+      if (!input) return;
+      input.focus();
+      if (nextCaret !== null) {
+        input.setSelectionRange(nextCaret, nextCaret);
+      }
+    });
+  }
+
+  function selectMentionImage(asset) {
+    insertAssetMention("image", asset, { selection: mentionMenu.range });
+  }
+
   async function createVideo() {
     const validationError = getFormError();
     if (validationError) {
@@ -685,6 +901,7 @@ export default function App() {
     try {
       const payload = {
         ...form,
+        prompt: promptForSubmit,
         duration: Number(form.duration),
         images: form.images.map((item) => item.url),
         videos: form.videos.map((item) => item.url),
@@ -911,13 +1128,180 @@ export default function App() {
               </div>
             ))}
           </div>
+          <aside className="result-panel">
+            <div className="panel-title">
+              <Icon name="⟲" />
+              <span>任务状态</span>
+            </div>
+            <div className={`status-orb ${isGenerating ? "is-spinning" : ""}`}>
+              <div />
+              <span>{isGenerating ? "" : "✓"}</span>
+            </div>
+            <div className="status-line">
+              {task?.status === "completed" || task?.status === "downloaded" ? <Icon name="✓" /> : task?.status === "failed" ? <Icon name="!" /> : <Icon name="⟲" />}
+              {statusText(task?.status)}
+            </div>
+            {isGenerating && <p className="status-hint">视频正在生成中，大约需要几分钟。</p>}
+            {task?.id && <code>{task.id}</code>}
+            {message && <p className="message">{message}</p>}
+            {videoFile && (
+              <div className="video-output">
+                <video controls src={videoFile.url} />
+                <a className="secondary-button" href={videoFile.downloadUrl} download>
+                  <Icon name="↓" size={17} />
+                  下载视频
+                </a>
+              </div>
+            )}
+            {submittedPayload && <pre>{JSON.stringify(submittedPayload, null, 2)}</pre>}
+
+            <div className="history-section">
+              <div className="history-head">
+                <div className="panel-title">
+                  <Icon name="◷" />
+                  <span>任务历史</span>
+                </div>
+                <button className="mini-button" onClick={loadTasks} disabled={historyLoading}>
+                  {historyLoading ? "刷新中" : "刷新"}
+                </button>
+              </div>
+
+              {taskHistory.length === 0 ? (
+                <p className="empty-history">暂无历史任务。创建任务后会自动写入数据库。</p>
+              ) : (
+                <div className="history-list">
+                  {taskHistory.map((record) => (
+                    <div className="history-item" key={record.taskId}>
+                      <button className="history-main" onClick={() => openHistoryTask(record)}>
+                        <span className="history-row">
+                          <strong>{statusText(record.status)}</strong>
+                          <small>{formatTime(record.createdAt)}</small>
+                        </span>
+                        <span className="history-model">{record.model || record.task?.model || "-"}</span>
+                        <code>{record.taskId}</code>
+                      </button>
+                      <div className="history-actions">
+                        <button className="mini-link" onClick={() => downloadHistoryTask(record)} disabled={!canPreviewStatus(record.status)}>
+                          下载
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </aside>
         </aside>
 
         <section className="composer">
           <div className="composer-head">
             <div>
-              <p className="eyebrow"><Icon name="▣" size={14} /> Create Task</p>
-              <h2>生成参数</h2>
+              <p className="eyebrow"><Icon name="▣" size={14} /> Prompt</p>
+              <h2>提示词</h2>
+            </div>
+          </div>
+
+          <label className="prompt-box">
+            <span className="field-top">
+              <span>Prompt</span>
+              <span className={`counter ${promptTooLong ? "invalid" : ""}`}>{promptLength}/{PROMPT_MAX_LENGTH}</span>
+            </span>
+            <div className="prompt-editor">
+              <textarea
+                ref={promptInputRef}
+                value={form.prompt}
+                maxLength={PROMPT_MAX_LENGTH}
+                aria-invalid={promptTooLong || promptForSubmitTooLong}
+                placeholder="必填，最长 6000 字符。建议写清主体、动作、镜头运动、构图、光线、节奏和稳定性要求。"
+                onChange={(event) => {
+                  const nextPrompt = event.target.value;
+                  setForm((current) => ({ ...current, prompt: nextPrompt }));
+                  updateMentionMenuFromInput(event.target);
+                }}
+                onClick={(event) => updateMentionMenuFromInput(event.target)}
+                onKeyUp={(event) => {
+                  if (event.key !== "Escape") updateMentionMenuFromInput(event.target);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    closeMentionMenu();
+                  }
+                }}
+              />
+              {mentionMenu.open && (
+                <div className="mention-menu">
+                  <div className="mention-menu-head">
+                    <strong>选择参考图</strong>
+                    <span>{mentionImageOptions.length ? "点击插入引用" : "暂无可引用图片"}</span>
+                  </div>
+                  {mentionImageOptions.length === 0 ? (
+                    <p className="mention-empty">先在参考图片里加入素材，或换一个关键词。</p>
+                  ) : (
+                    <div className="mention-list">
+                      {mentionImageOptions.map((asset) => {
+                        const selectedIndex = form.images.findIndex((item) => getAssetKey(item) === getAssetKey(asset));
+                        const token = selectedIndex >= 0
+                          ? getReferenceToken("image", selectedIndex + 1)
+                          : `@${FIELD_CONFIG.image.referenceLabel}${form.images.length + 1}`;
+                        return (
+                          <button
+                            type="button"
+                            className="mention-option"
+                            key={`mention-${asset.id || asset.url}`}
+                            onMouseDown={(event) => event.preventDefault()}
+                            onClick={() => selectMentionImage(asset)}
+                          >
+                            <span className="mention-thumb">
+                              <img src={asset.url} alt={asset.filename} loading="lazy" />
+                            </span>
+                            <span className="mention-copy">
+                              <strong>{token}</strong>
+                              <small>{asset.filename}</small>
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+            {referenceBindings.length > 0 && (
+              <div className="reference-preview">
+                <div className="asset-group-head">
+                  <strong>@ 引用映射</strong>
+                  <span>{referenceBindings.length} 个引用</span>
+                </div>
+                <div className="reference-token-list">
+                  {referenceBindings.map((binding) => (
+                    <button
+                      type="button"
+                      className="reference-chip"
+                      key={`${binding.kind}-${binding.asset.id || binding.asset.url}`}
+                      onClick={() => insertAssetMention(binding.kind, binding.asset)}
+                    >
+                      <span>{binding.token}</span>
+                      <small>{binding.asset.filename}</small>
+                    </button>
+                  ))}
+                </div>
+                {promptForSubmit !== form.prompt.trim() && (
+                  <div className="prompt-submit-preview">
+                    <strong>提交给模型的 Prompt</strong>
+                    <p>{promptForSubmit}</p>
+                  </div>
+                )}
+              </div>
+            )}
+          </label>
+        </section>
+
+        <aside className="settings-panel">
+          <div className="composer-head">
+            <div>
+              <p className="eyebrow"><Icon name="▤" size={14} /> Settings</p>
+              <h2>生成配置</h2>
             </div>
             {selectedModel && (
               <div className="model-badge">
@@ -926,21 +1310,6 @@ export default function App() {
               </div>
             )}
           </div>
-
-          <label className="prompt-box">
-            <span className="field-top">
-              <span>Prompt</span>
-              <span className={`counter ${promptTooLong ? "invalid" : ""}`}>{promptLength}/{PROMPT_MAX_LENGTH}</span>
-            </span>
-            <textarea
-              value={form.prompt}
-              maxLength={PROMPT_MAX_LENGTH}
-              aria-invalid={promptTooLong}
-              placeholder="必填，最长 6000 字符。建议写清主体、动作、镜头运动、构图、光线、节奏和稳定性要求。"
-              onChange={(event) => setForm({ ...form, prompt: event.target.value })}
-            />
-          </label>
-
           <div className="param-grid">
             <label>
               画幅
@@ -989,6 +1358,7 @@ export default function App() {
           <div className="reference-grid">
             <ReferencePanel
               config={FIELD_CONFIG.image}
+              kind="image"
               selected={form.images}
               library={libraryByKind.image}
               disabled={false}
@@ -997,10 +1367,12 @@ export default function App() {
               modelWarning={selectedModel?.requiresReference ? FIELD_CONFIG.image.requiredHint : FIELD_CONFIG.image.optionalHint}
               onUpload={(files) => handleUpload("image", files)}
               onAdd={(asset) => addAssetToForm("image", asset)}
+              onMention={(asset) => insertAssetMention("image", asset)}
               onRemove={(asset) => removeAssetFromForm("image", asset)}
             />
             <ReferencePanel
               config={FIELD_CONFIG.video}
+              kind="video"
               selected={form.videos}
               library={libraryByKind.video}
               disabled={!selectedModel?.supportsVideoReference}
@@ -1009,10 +1381,12 @@ export default function App() {
               modelWarning={selectedModel?.supportsVideoReference ? FIELD_CONFIG.video.optionalHint : "当前模型不支持参考视频，仅 XH / XH 1080p / XH 4K 可用。"}
               onUpload={(files) => handleUpload("video", files)}
               onAdd={(asset) => addAssetToForm("video", asset)}
+              onMention={(asset) => insertAssetMention("video", asset)}
               onRemove={(asset) => removeAssetFromForm("video", asset)}
             />
             <ReferencePanel
               config={FIELD_CONFIG.audio}
+              kind="audio"
               selected={form.audios}
               library={libraryByKind.audio}
               disabled={false}
@@ -1021,6 +1395,7 @@ export default function App() {
               modelWarning={FIELD_CONFIG.audio.optionalHint}
               onUpload={(files) => handleUpload("audio", files)}
               onAdd={(asset) => addAssetToForm("audio", asset)}
+              onMention={(asset) => insertAssetMention("audio", asset)}
               onRemove={(asset) => removeAssetFromForm("audio", asset)}
             />
           </div>
@@ -1029,70 +1404,6 @@ export default function App() {
             {busy ? <Icon name="◐" className="spin" size={19} /> : <Icon name="▶" size={19} />}
             {busy ? "提交中" : "创建并轮询视频"}
           </button>
-        </section>
-
-        <aside className="result-panel">
-          <div className="panel-title">
-            <Icon name="⟲" />
-            <span>任务状态</span>
-          </div>
-          <div className={`status-orb ${isGenerating ? "is-spinning" : ""}`}>
-            <div />
-            <span>{isGenerating ? "" : "✓"}</span>
-          </div>
-          <div className="status-line">
-            {task?.status === "completed" || task?.status === "downloaded" ? <Icon name="✓" /> : task?.status === "failed" ? <Icon name="!" /> : <Icon name="⟲" />}
-            {statusText(task?.status)}
-          </div>
-          {isGenerating && <p className="status-hint">视频正在生成中，大约需要几分钟。</p>}
-          {task?.id && <code>{task.id}</code>}
-          {message && <p className="message">{message}</p>}
-          {videoFile && (
-            <div className="video-output">
-              <video controls src={videoFile.url} />
-              <a className="secondary-button" href={videoFile.downloadUrl} download>
-                <Icon name="↓" size={17} />
-                下载视频
-              </a>
-            </div>
-          )}
-          {submittedPayload && <pre>{JSON.stringify(submittedPayload, null, 2)}</pre>}
-
-          <div className="history-section">
-            <div className="history-head">
-              <div className="panel-title">
-                <Icon name="◷" />
-                <span>任务历史</span>
-              </div>
-              <button className="mini-button" onClick={loadTasks} disabled={historyLoading}>
-                {historyLoading ? "刷新中" : "刷新"}
-              </button>
-            </div>
-
-            {taskHistory.length === 0 ? (
-              <p className="empty-history">暂无历史任务。创建任务后会自动写入数据库。</p>
-            ) : (
-              <div className="history-list">
-                {taskHistory.map((record) => (
-                  <div className="history-item" key={record.taskId}>
-                    <button className="history-main" onClick={() => openHistoryTask(record)}>
-                      <span className="history-row">
-                        <strong>{statusText(record.status)}</strong>
-                        <small>{formatTime(record.createdAt)}</small>
-                      </span>
-                      <span className="history-model">{record.model || record.task?.model || "-"}</span>
-                      <code>{record.taskId}</code>
-                    </button>
-                    <div className="history-actions">
-                      <button className="mini-link" onClick={() => downloadHistoryTask(record)} disabled={!canPreviewStatus(record.status)}>
-                        下载
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
         </aside>
       </section>
     </main>
