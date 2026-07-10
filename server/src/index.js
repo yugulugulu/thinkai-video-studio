@@ -5,6 +5,7 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import path from "node:path";
 import { nanoid } from "nanoid";
+import { configureProductionProxy } from "./proxy.js";
 import { createVideoDownloadToken, getApiKeyByUserId, loginUser, registerUser, requireAuth, saveApiKeyForUser, verifyVideoDownloadToken } from "./auth.js";
 import { initDatabase } from "./db.js";
 import { envNumber } from "./env.js";
@@ -14,6 +15,8 @@ import { getVideoObjectAccessUrls, isOssPublicReadEnabled, uploadBufferToOss, up
 import { buildReferences, createVideoTask, getVideoContentStream, getVideoTask } from "./thinkaiClient.js";
 import { ensureStorage, getTaskRecord, migrateTasksFromFile, publicConfig, readConfig, readTasks, upsertTaskRecord, writeConfig } from "./storage.js";
 import { validateCreatePayload } from "./validation.js";
+
+configureProductionProxy();
 
 const app = express();
 const port = envNumber("PORT", 8787);
