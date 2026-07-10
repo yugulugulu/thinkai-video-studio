@@ -157,23 +157,62 @@ function getReferenceToken(kind, index) {
   return `@${getReferenceLabel(kind, index)}`;
 }
 
-function renderPromptHighlight(value) {
+const PROMPT_TOKEN_PATTERN = /@(?:参考图|参考视频|音频)\d+/g;
+
+function syncPromptEditorDom(editor, value, validTokens = new Set()) {
+  if (!editor) return;
+  const fragment = document.createDocumentFragment();
+  let lastIndex = 0;
+  let match;
+
+  PROMPT_TOKEN_PATTERN.lastIndex = 0;
+  while ((match = PROMPT_TOKEN_PATTERN.exec(value || "")) !== null) {
+    if (match.index > lastIndex) {
+      fragment.append(document.createTextNode(value.slice(lastIndex, match.index)));
+    }
+
+    if (validTokens.has(match[0])) {
+      const token = document.createElement("span");
+      token.className = "prompt-reference-token";
+      token.contentEditable = "false";
+      token.dataset.promptToken = match[0];
+      token.textContent = match[0];
+      fragment.append(token);
+    } else {
+      fragment.append(document.createTextNode(match[0]));
+    }
+
+    lastIndex = match.index + match[0].length;
+  }
+
+  if (lastIndex < (value || "").length) {
+    fragment.append(document.createTextNode(value.slice(lastIndex)));
+  }
+
+  editor.replaceChildren(fragment);
+}
+
+function renderPromptHighlight(value, validTokens = new Set()) {
   if (!value) return null;
 
-  const tokenPattern = /(@(?:参考图|参考视频|音频)\d+)/g;
   const nodes = [];
   let lastIndex = 0;
   let match;
 
-  while ((match = tokenPattern.exec(value)) !== null) {
+  PROMPT_TOKEN_PATTERN.lastIndex = 0;
+  while ((match = PROMPT_TOKEN_PATTERN.exec(value)) !== null) {
     if (match.index > lastIndex) {
       nodes.push(value.slice(lastIndex, match.index));
     }
-    nodes.push(
-      <span className="prompt-reference-token" key={`${match[0]}-${match.index}`}>
-        {match[0]}
-      </span>
-    );
+    if (validTokens.has(match[0])) {
+      nodes.push(
+        <span className="prompt-reference-token" key={`${match[0]}-${match.index}`}>
+          {match[0]}
+        </span>
+      );
+    } else {
+      nodes.push(match[0]);
+    }
     lastIndex = match.index + match[0].length;
   }
 
@@ -182,6 +221,142 @@ function renderPromptHighlight(value) {
   }
 
   return nodes;
+}
+
+function getPromptNodeText(node) {
+  if (!node) return "";
+  if (node.nodeType === Node.TEXT_NODE) return node.nodeValue || "";
+  if (node.nodeType !== Node.ELEMENT_NODE && node.nodeType !== Node.DOCUMENT_FRAGMENT_NODE) return "";
+
+  let text = "";
+  node.childNodes.forEach((child) => {
+    if (child.nodeType === Node.TEXT_NODE) {
+      text += child.nodeValue || "";
+      return;
+    }
+    if (child.nodeType !== Node.ELEMENT_NODE) return;
+
+    if (child.dataset?.promptToken) {
+      text += child.dataset.promptToken;
+      return;
+    }
+    if (child.tagName === "BR") {
+      text += "\n";
+      return;
+    }
+
+    text += getPromptNodeText(child);
+    if ((child.tagName === "DIV" || child.tagName === "P") && child.nextSibling) {
+      text += "\n";
+    }
+  });
+
+  return text.replace(/\u00a0/g, " ");
+}
+
+function getPromptEditorSelection(editor) {
+  const selection = window.getSelection();
+  if (!editor || !selection || selection.rangeCount === 0) return null;
+
+  const range = selection.getRangeAt(0);
+  if (!editor.contains(range.startContainer) || !editor.contains(range.endContainer)) return null;
+
+  const startRange = document.createRange();
+  startRange.selectNodeContents(editor);
+  startRange.setEnd(range.startContainer, range.startOffset);
+  const start = getPromptNodeText(startRange.cloneContents()).length;
+
+  const endRange = document.createRange();
+  endRange.selectNodeContents(editor);
+  endRange.setEnd(range.endContainer, range.endOffset);
+  const end = getPromptNodeText(endRange.cloneContents()).length;
+
+  return {
+    start: Math.min(start, end),
+    end: Math.max(start, end)
+  };
+}
+
+function getRenderedPromptTokens(editor) {
+  return new Set(
+    Array.from(editor?.querySelectorAll?.("[data-prompt-token]") || [])
+      .map((node) => node.dataset.promptToken)
+      .filter(Boolean)
+  );
+}
+
+function getPromptOffsetBeforeNode(editor, node) {
+  if (!editor || !node || !editor.contains(node)) return 0;
+  const range = document.createRange();
+  range.selectNodeContents(editor);
+  range.setEndBefore(node);
+  return getPromptNodeText(range.cloneContents()).length;
+}
+
+function setPromptEditorCaret(editor, caret) {
+  if (!editor) return;
+
+  const target = Math.max(0, Number(caret) || 0);
+  const range = document.createRange();
+  let offset = 0;
+  let placed = false;
+
+  function placeInNode(node) {
+    for (const child of node.childNodes) {
+      if (child.nodeType === Node.TEXT_NODE) {
+        const textLength = (child.nodeValue || "").length;
+        if (offset + textLength >= target) {
+          range.setStart(child, Math.max(0, target - offset));
+          placed = true;
+          return true;
+        }
+        offset += textLength;
+        continue;
+      }
+
+      if (child.nodeType !== Node.ELEMENT_NODE) continue;
+
+      if (child.dataset?.promptToken) {
+        const tokenLength = child.dataset.promptToken.length;
+        if (offset + tokenLength >= target) {
+          if (target <= offset) {
+            range.setStartBefore(child);
+          } else {
+            range.setStartAfter(child);
+          }
+          placed = true;
+          return true;
+        }
+        offset += tokenLength;
+        continue;
+      }
+
+      if (child.tagName === "BR") {
+        if (offset + 1 >= target) {
+          range.setStartAfter(child);
+          placed = true;
+          return true;
+        }
+        offset += 1;
+        continue;
+      }
+
+      if (placeInNode(child)) return true;
+    }
+    return false;
+  }
+
+  placeInNode(editor);
+  if (!placed) {
+    range.selectNodeContents(editor);
+    range.collapse(false);
+  } else {
+    range.collapse(true);
+  }
+
+  const selection = window.getSelection();
+  selection.removeAllRanges();
+  selection.addRange(range);
 }
 
 function createReferenceBindings(formValue) {
@@ -301,6 +476,67 @@ function getActiveMention(value, caret) {
       end: caret
     }
   };
+}
+
+function getTextareaCaretPosition(input) {
+  if (!input) return { left: 12, top: 12 };
+
+  const style = window.getComputedStyle(input);
+  const mirror = document.createElement("div");
+  const properties = [
+    "boxSizing",
+    "width",
+    "borderTopWidth",
+    "borderRightWidth",
+    "borderBottomWidth",
+    "borderLeftWidth",
+    "paddingTop",
+    "paddingRight",
+    "paddingBottom",
+    "paddingLeft",
+    "fontFamily",
+    "fontSize",
+    "fontStyle",
+    "fontWeight",
+    "letterSpacing",
+    "lineHeight",
+    "textAlign",
+    "textTransform",
+    "wordSpacing",
+    "textIndent",
+    "whiteSpace",
+    "wordBreak",
+    "overflowWrap"
+  ];
+
+  properties.forEach((property) => {
+    mirror.style[property] = style[property];
+  });
+  mirror.style.position = "absolute";
+  mirror.style.visibility = "hidden";
+  mirror.style.overflow = "hidden";
+  mirror.style.top = "0";
+  mirror.style.left = "-9999px";
+  mirror.style.minHeight = "0";
+  mirror.style.height = "auto";
+  mirror.style.whiteSpace = "pre-wrap";
+  mirror.style.overflowWrap = "break-word";
+
+  const caret = input.selectionStart || 0;
+  mirror.textContent = input.value.slice(0, caret);
+  const marker = document.createElement("span");
+  marker.textContent = "\u200b";
+  mirror.appendChild(marker);
+  document.body.appendChild(mirror);
+
+  const lineHeight = Number.parseFloat(style.lineHeight) || Number.parseFloat(style.fontSize) * 1.55 || 20;
+  const position = {
+    left: input.offsetLeft + marker.offsetLeft - input.scrollLeft,
+    top: input.offsetTop + marker.offsetTop - input.scrollTop + lineHeight + 8
+  };
+
+  document.body.removeChild(mirror);
+  return position;
 }
 
 function VideoAssetPreview({ asset }) {
@@ -536,7 +772,7 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState({ image: false, video: false, audio: false });
-  const [mentionMenu, setMentionMenu] = useState({ open: false, query: "", range: null });
+  const [mentionMenu, setMentionMenu] = useState({ open: false, query: "", range: null, position: null });
   const pollRefs = useRef(new Map());
   const pollErrorCountsRef = useRef(new Map());
   const videoAccessRef = useRef({ taskId: "", file: null });
@@ -552,6 +788,14 @@ export default function App() {
   const promptLength = form.prompt.length;
   const promptForSubmit = useMemo(() => buildPromptWithReferenceTokens(form), [form]);
   const referenceBindings = useMemo(() => createReferenceBindings(form), [form]);
+  const validPromptTokens = useMemo(
+    () => new Set(referenceBindings.map((binding) => binding.token)),
+    [referenceBindings]
+  );
+  const validPromptTokenKey = useMemo(
+    () => referenceBindings.map((binding) => binding.token).join("|"),
+    [referenceBindings]
+  );
   const promptForSubmitTooLong = promptForSubmit.length > PROMPT_MAX_LENGTH;
   const durationNumber = Number(form.duration);
   const durationInvalid = !Number.isFinite(durationNumber) || durationNumber < MIN_DURATION || durationNumber > MAX_DURATION;
@@ -970,9 +1214,24 @@ export default function App() {
     };
     syncPromptHighlightScroll(input);
     const activeMention = getActiveMention(input.value, input.selectionStart);
-    setMentionMenu(activeMention
-      ? { open: true, query: activeMention.query, range: activeMention.range }
-      : { open: false, query: "", range: null });
+    if (!activeMention) {
+      setMentionMenu({ open: false, query: "", range: null, position: null });
+      return;
+    }
+
+    const caretPosition = getTextareaCaretPosition(input);
+    const menuWidth = 360;
+    const maxLeft = Math.max(12, input.offsetLeft + input.clientWidth - menuWidth - 12);
+    const left = Math.min(Math.max(caretPosition.left, input.offsetLeft + 12), maxLeft);
+    const maxTop = input.offsetTop + input.clientHeight - 120;
+    const top = Math.min(Math.max(caretPosition.top, input.offsetTop + 12), maxTop);
+
+    setMentionMenu({
+      open: true,
+      query: activeMention.query,
+      range: activeMention.range,
+      position: { left, top }
+    });
   }
 
   function syncPromptHighlightScroll(input = promptInputRef.current) {
@@ -982,7 +1241,7 @@ export default function App() {
   }
 
   function closeMentionMenu() {
-    setMentionMenu({ open: false, query: "", range: null });
+    setMentionMenu({ open: false, query: "", range: null, position: null });
   }
 
   function insertAssetMention(kind, asset, options = {}) {
@@ -1021,6 +1280,7 @@ export default function App() {
       input.focus();
       if (nextCaret !== null) {
         input.setSelectionRange(nextCaret, nextCaret);
+        syncPromptHighlightScroll(input);
       }
     });
   }
@@ -1411,7 +1671,7 @@ export default function App() {
             </span>
             <div className="prompt-editor">
               <div className="prompt-highlight" ref={promptHighlightRef} aria-hidden="true">
-                {renderPromptHighlight(form.prompt)}
+                {renderPromptHighlight(form.prompt, validPromptTokens)}
               </div>
               <textarea
                 ref={promptInputRef}
@@ -1437,7 +1697,13 @@ export default function App() {
                 }}
               />
               {mentionMenu.open && (
-                <div className="mention-menu">
+                <div
+                  className="mention-menu"
+                  style={{
+                    "--mention-left": `${mentionMenu.position?.left ?? 12}px`,
+                    "--mention-top": `${mentionMenu.position?.top ?? 12}px`
+                  }}
+                >
                   <div className="mention-menu-head">
                     <strong>选择参考素材</strong>
                     <span>{mentionOptions.length ? "点击插入引用" : "暂无可引用素材"}</span>
@@ -1493,12 +1759,6 @@ export default function App() {
                     </button>
                   ))}
                 </div>
-                {promptForSubmit !== form.prompt.trim() && (
-                  <div className="prompt-submit-preview">
-                    <strong>提交给模型的 Prompt</strong>
-                    <p>{promptForSubmit}</p>
-                  </div>
-                )}
               </div>
             )}
           </label>

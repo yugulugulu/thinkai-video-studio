@@ -736,18 +736,12 @@ select:focus {
 }
 
 .prompt-reference-token {
-  display: inline-flex;
-  align-items: center;
-  min-height: 22px;
-  margin: 0 1px;
-  padding: 0 8px;
-  border: 1px solid rgba(0, 113, 227, 0.18);
+  display: inline;
   border-radius: 999px;
   background: rgba(0, 113, 227, 0.1);
+  box-shadow: 0 0 0 4px rgba(0, 113, 227, 0.1), 0 0 0 5px rgba(0, 113, 227, 0.16);
   color: var(--blue-deep);
-  font-weight: 850;
-  line-height: 1.45;
-  white-space: nowrap;
+  font: inherit;
 }
 
 .prompt-editor textarea {
@@ -773,12 +767,12 @@ select:focus {
 
 .mention-menu {
   position: absolute;
-  left: 12px;
-  right: 12px;
-  top: calc(100% - 10px);
+  left: var(--mention-left, 12px);
+  top: var(--mention-top, 12px);
   z-index: 12;
   display: grid;
   gap: 10px;
+  width: min(360px, calc(100% - 24px));
   max-height: 300px;
   padding: 12px;
   border: 1px solid rgba(15, 23, 42, 0.1);
@@ -929,29 +923,6 @@ select:focus {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.prompt-submit-preview {
-  display: grid;
-  gap: 6px;
-  padding-top: 10px;
-  border-top: 1px solid rgba(0, 113, 227, 0.12);
-}
-
-.prompt-submit-preview strong {
-  color: var(--text);
-  font-size: 12px;
-}
-
-.prompt-submit-preview p {
-  max-height: 120px;
-  margin: 0;
-  color: var(--muted-strong);
-  font-size: 12px;
-  font-weight: 620;
-  line-height: 1.55;
-  overflow: auto;
-  overflow-wrap: anywhere;
 }
 
 .param-grid,
@@ -1652,7 +1623,8 @@ pre {
     grid-column: auto;
   }
 
-  .prompt-box textarea {
+  .prompt-box textarea,
+  .prompt-highlight {
     min-height: 280px;
   }
 
