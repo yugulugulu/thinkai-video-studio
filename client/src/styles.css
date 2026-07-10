@@ -1371,6 +1371,13 @@ code {
   margin-bottom: 0;
 }
 
+.history-tools {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .mini-button,
 .mini-link {
   display: inline-flex;
@@ -1399,6 +1406,7 @@ code {
   color: var(--blue-deep);
 }
 
+.mini-button:disabled,
 .mini-link:disabled {
   cursor: not-allowed;
   opacity: 0.45;
@@ -1414,10 +1422,185 @@ code {
 .history-list {
   display: grid;
   gap: 10px;
-  max-height: 360px;
   margin-top: 14px;
   overflow: auto;
   padding-right: 2px;
+}
+
+.history-dialog {
+  display: grid;
+  gap: 16px;
+  width: min(760px, 100%);
+  max-height: min(760px, calc(100vh - 48px));
+  padding: 24px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xl);
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 28px 70px rgba(15, 23, 42, 0.16);
+  overflow: hidden;
+}
+
+.history-dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.history-dialog-head .panel-title {
+  margin-bottom: 0;
+}
+
+.history-dialog-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.history-dialog-list {
+  display: grid;
+  gap: 10px;
+  min-height: 0;
+  max-height: min(620px, calc(100vh - 170px));
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.history-detail-dialog {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  width: min(920px, 100%);
+  max-height: min(820px, calc(100vh - 48px));
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xl);
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 32px 80px rgba(15, 23, 42, 0.2);
+  overflow: hidden;
+}
+
+.history-detail-head,
+.history-detail-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 22px 26px;
+}
+
+.history-detail-head {
+  border-bottom: 1px solid var(--line);
+}
+
+.history-detail-head .eyebrow {
+  margin-bottom: 6px;
+}
+
+.history-detail-head h2 {
+  margin: 0;
+  font-size: 24px;
+}
+
+.history-detail-close {
+  flex: 0 0 auto;
+  width: 42px;
+  height: 42px;
+}
+
+.history-detail-body {
+  min-height: 0;
+  padding: 24px 26px;
+  overflow: auto;
+}
+
+.history-detail-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.history-detail-summary > div {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: rgba(245, 245, 247, 0.72);
+}
+
+.history-detail-summary span,
+.history-detail-id > span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.history-detail-summary strong {
+  overflow-wrap: anywhere;
+}
+
+.history-detail-id {
+  display: grid;
+  gap: 7px;
+  margin-top: 16px;
+}
+
+.history-detail-id code {
+  padding: 12px 14px;
+}
+
+.history-detail-loading {
+  margin: 18px 0 0;
+  color: var(--muted);
+  text-align: center;
+}
+
+.history-detail-video {
+  margin-top: 18px;
+}
+
+.history-detail-video video {
+  display: block;
+  width: 100%;
+  max-height: 420px;
+  border-radius: var(--radius-lg);
+  background: #111111;
+}
+
+.history-detail-memory {
+  margin-top: 18px;
+}
+
+.history-detail-payload {
+  margin-top: 18px;
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+}
+
+.history-detail-payload summary {
+  color: var(--blue-deep);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.history-detail-payload pre {
+  max-height: 300px;
+}
+
+.history-detail-footer {
+  justify-content: flex-end;
+  border-top: 1px solid var(--line);
+  background: rgba(250, 250, 252, 0.88);
+}
+
+.history-detail-footer .primary-button,
+.history-detail-footer .secondary-button {
+  width: auto;
+  min-width: 112px;
 }
 
 .history-item {
@@ -1647,5 +1830,16 @@ pre {
 
   .config-dialog {
     padding: 20px;
+  }
+
+  .history-detail-head,
+  .history-detail-body,
+  .history-detail-footer {
+    padding-left: 18px;
+    padding-right: 18px;
+  }
+
+  .history-detail-summary {
+    grid-template-columns: 1fr;
   }
 }

@@ -769,6 +769,8 @@ export default function App() {
   const [taskHistory, setTaskHistory] = useState([]);
   const [assets, setAssets] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyDialogOpen, setHistoryDialogOpen] = useState(false);
+  const [historyDetail, setHistoryDetail] = useState(null);
   const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState({ image: false, video: false, audio: false });
@@ -1328,20 +1330,35 @@ export default function App() {
   }
 
   async function openHistoryTask(record) {
-    setMessage("");
-    setVideoFile(null);
-    setSubmittedPayload(record.payload || null);
-    setSubmittedMemory(getReusableTaskMemory(record));
+    setHistoryDialogOpen(false);
+    setHistoryDetail({
+      record,
+      task: record.task || { id: record.taskId, status: record.status },
+      videoFile: null,
+      loading: true,
+      error: ""
+    });
     try {
-      await refreshTask(record.taskId, false, true);
-      if (canPreviewStatus(record.status)) {
-        await loadVideoAccess(record.taskId);
-      }
-      if (isPollingStatus(record.status)) {
-        startPolling(record.taskId, true, true);
-      }
+      const data = await api.getTask(record.taskId);
+      const tasks = await loadTasks();
+      const currentRecord = tasks.find((item) => item.taskId === record.taskId) || record;
+      const detailVideoFile = canPreviewStatus(data.task.status)
+        ? await api.getVideoAccess(record.taskId).then((access) => ({
+            url: toAbsoluteUrl(access.previewUrl),
+            downloadUrl: toAbsoluteUrl(access.downloadUrl)
+          }))
+        : null;
+      setHistoryDetail((current) => current?.record.taskId === record.taskId ? {
+        record: currentRecord,
+        task: data.task,
+        videoFile: detailVideoFile,
+        loading: false,
+        error: ""
+      } : current);
     } catch (error) {
-      setMessage(error.message);
+      setHistoryDetail((current) => current?.record.taskId === record.taskId
+        ? { ...current, loading: false, error: error.message }
+        : current);
     }
   }
 
@@ -1385,6 +1402,35 @@ export default function App() {
     setSubmittedMemory(memory);
     setMessage("已复用历史任务的提示词和参考素材，可继续补镜头。");
     window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function renderHistoryItem(record, options = {}) {
+    const closeOnSelect = Boolean(options.closeOnSelect);
+    const closeAndRun = (action) => {
+      if (closeOnSelect) setHistoryDialogOpen(false);
+      action();
+    };
+
+    return (
+      <div className="history-item" key={record.taskId}>
+        <button className="history-main" onClick={() => closeAndRun(() => openHistoryTask(record))}>
+          <span className="history-row">
+            <strong>{statusText(record.status)}</strong>
+            <small>{formatTime(record.createdAt)}</small>
+          </span>
+          <span className="history-model">{record.model || record.task?.model || "-"}</span>
+          <code>{record.taskId}</code>
+        </button>
+        <div className="history-actions">
+          <button className="mini-link" onClick={() => closeAndRun(() => reuseHistoryTask(record))}>
+            复用
+          </button>
+          <button className="mini-link" onClick={() => downloadHistoryTask(record)} disabled={!canPreviewStatus(record.status)}>
+            下载
+          </button>
+        </div>
+      </div>
+    );
   }
 
   useEffect(() => {
@@ -1526,6 +1572,122 @@ export default function App() {
         </div>
       )}
 
+      {historyDialogOpen && (
+        <div className="dialog-backdrop" onClick={() => setHistoryDialogOpen(false)}>
+          <section className="history-dialog" onClick={(event) => event.stopPropagation()}>
+            <div className="history-dialog-head">
+              <div className="panel-title">
+                <Icon name="◷" />
+                <span>更多历史任务</span>
+              </div>
+              <div className="history-dialog-actions">
+                <span>{Math.max(taskHistory.length - 1, 0)} 条</span>
+                <button type="button" className="icon-button" onClick={() => setHistoryDialogOpen(false)} aria-label="关闭">
+                  <Icon name="×" size={18} />
+                </button>
+              </div>
+            </div>
+            {taskHistory.length <= 1 ? (
+              <p className="empty-history">暂无更多历史任务。</p>
+            ) : (
+              <div className="history-dialog-list">
+                {taskHistory.slice(1).map((record) => renderHistoryItem(record, { closeOnSelect: true }))}
+              </div>
+            )}
+          </section>
+        </div>
+      )}
+
+      {historyDetail && (
+        <div className="dialog-backdrop" onClick={() => setHistoryDetail(null)}>
+          <section className="history-detail-dialog" onClick={(event) => event.stopPropagation()}>
+            <div className="history-detail-head">
+              <div>
+                <p className="eyebrow"><Icon name="◷" size={14} /> History Task</p>
+                <h2>任务详情</h2>
+              </div>
+              <button type="button" className="icon-button history-detail-close" onClick={() => setHistoryDetail(null)} aria-label="关闭任务详情">
+                <Icon name="×" size={22} />
+              </button>
+            </div>
+
+            <div className="history-detail-body">
+              <div className="history-detail-summary">
+                <div>
+                  <span>任务状态</span>
+                  <strong>{statusText(historyDetail.task?.status || historyDetail.record.status)}</strong>
+                </div>
+                <div>
+                  <span>模型</span>
+                  <strong>{historyDetail.record.model || historyDetail.task?.model || "-"}</strong>
+                </div>
+                <div>
+                  <span>创建时间</span>
+                  <strong>{formatTime(historyDetail.record.createdAt)}</strong>
+                </div>
+              </div>
+
+              <div className="history-detail-id">
+                <span>任务 ID</span>
+                <code>{historyDetail.record.taskId}</code>
+              </div>
+
+              {historyDetail.loading && <p className="history-detail-loading">正在加载任务详情...</p>}
+              {historyDetail.error && <p className="message">{historyDetail.error}</p>}
+
+              {historyDetail.videoFile && (
+                <div className="history-detail-video">
+                  <video controls src={historyDetail.videoFile.url} />
+                </div>
+              )}
+
+              {getReusableTaskMemory(historyDetail.record) && (
+                <div className="memory-preview history-detail-memory">
+                  <div className="asset-group-head">
+                    <strong>任务记忆</strong>
+                    <span>{countMemoryReferences(getReusableTaskMemory(historyDetail.record))} 个参考素材</span>
+                  </div>
+                  <p>{getReusableTaskMemory(historyDetail.record).editorPrompt || getReusableTaskMemory(historyDetail.record).submittedPrompt || "未保存提示词"}</p>
+                  <div className="memory-reference-list">
+                    {["images", "videos", "audios"].flatMap((key) => (
+                      (getReusableTaskMemory(historyDetail.record).references?.[key] || []).map((asset) => (
+                        <span className="memory-reference-chip" key={`${key}-${asset.id || asset.url}`}>
+                          {asset.filename || asset.url}
+                        </span>
+                      ))
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {historyDetail.record.payload && (
+                <details className="history-detail-payload">
+                  <summary>查看提交参数</summary>
+                  <pre>{JSON.stringify(historyDetail.record.payload, null, 2)}</pre>
+                </details>
+              )}
+            </div>
+
+            <div className="history-detail-footer">
+              <button className="secondary-button" onClick={() => {
+                const record = historyDetail.record;
+                setHistoryDetail(null);
+                reuseHistoryTask(record);
+              }}>
+                复用任务
+              </button>
+              <button
+                className="primary-button"
+                onClick={() => downloadHistoryTask(historyDetail.record)}
+                disabled={!canPreviewStatus(historyDetail.task?.status || historyDetail.record.status)}
+              >
+                下载视频
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
       <section className="topbar">
         <div className="brand-lockup">
           <img className="brand-logo" src={weblogo} alt="ThinkAI News" />
@@ -1621,35 +1783,21 @@ export default function App() {
                   <Icon name="◷" />
                   <span>任务历史</span>
                 </div>
-                <button className="mini-button" onClick={loadTasks} disabled={historyLoading}>
-                  {historyLoading ? "刷新中" : "刷新"}
-                </button>
+                <div className="history-tools">
+                  <button className="mini-button" onClick={() => setHistoryDialogOpen(true)} disabled={taskHistory.length <= 1}>
+                    查看更多
+                  </button>
+                  <button className="mini-button" onClick={loadTasks} disabled={historyLoading}>
+                    {historyLoading ? "刷新中" : "刷新"}
+                  </button>
+                </div>
               </div>
 
               {taskHistory.length === 0 ? (
                 <p className="empty-history">暂无历史任务。创建任务后会自动写入数据库。</p>
               ) : (
                 <div className="history-list">
-                  {taskHistory.map((record) => (
-                    <div className="history-item" key={record.taskId}>
-                      <button className="history-main" onClick={() => openHistoryTask(record)}>
-                        <span className="history-row">
-                          <strong>{statusText(record.status)}</strong>
-                          <small>{formatTime(record.createdAt)}</small>
-                        </span>
-                        <span className="history-model">{record.model || record.task?.model || "-"}</span>
-                        <code>{record.taskId}</code>
-                      </button>
-                      <div className="history-actions">
-                        <button className="mini-link" onClick={() => reuseHistoryTask(record)}>
-                          复用
-                        </button>
-                        <button className="mini-link" onClick={() => downloadHistoryTask(record)} disabled={!canPreviewStatus(record.status)}>
-                          下载
-                        </button>
-                      </div>
-                    </div>
-                  ))}
+                  {taskHistory.slice(0, 1).map((record) => renderHistoryItem(record))}
                 </div>
               )}
             </div>
