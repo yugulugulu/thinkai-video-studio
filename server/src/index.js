@@ -213,6 +213,16 @@ async function ensureArchivedVideoAsset({ userId, taskId, config, apiKey, taskRe
   }
 }
 
+function startArchivedVideoAsset(input) {
+  if (archiveLocks.has(input.taskId)) {
+    return;
+  }
+
+  void ensureArchivedVideoAsset(input).catch((error) => {
+    console.error(`视频归档失败 [${input.taskId}]`, error);
+  });
+}
+
 async function buildTaskAccessPayload(file) {
   const access = await getVideoObjectAccessUrls(file.objectKey, {
     filename: file.filename,
@@ -435,16 +445,11 @@ app.get("/api/videos/:taskId", requireAuth, async (req, res) => {
     let nextProgress = task.progress;
     let file = currentRecord?.file || null;
 
-    if (task.status === "completed") {
-      file = await ensureArchivedVideoAsset({
-        userId: req.user.id,
-        taskId: req.params.taskId,
-        config,
-        apiKey: latestApiKey.apiKey,
-        taskRecord: currentRecord,
-        task
-      });
+    if (file?.objectKey) {
       nextStatus = "downloaded";
+      nextProgress = 100;
+    } else if (task.status === "completed") {
+      nextStatus = "archiving";
       nextProgress = 100;
     }
 
@@ -457,13 +462,28 @@ app.get("/api/videos/:taskId", requireAuth, async (req, res) => {
       model: task.model,
       payload: currentRecord?.payload || null,
       task,
-      file
+      ...(file ? { file } : {})
     });
+
+    const responseStatus = saved.file?.objectKey ? "downloaded" : nextStatus;
+    const responseProgress = responseStatus === "downloaded" ? 100 : nextProgress;
+
+    if (responseStatus === "archiving") {
+      startArchivedVideoAsset({
+        userId: req.user.id,
+        taskId: req.params.taskId,
+        config,
+        apiKey: latestApiKey.apiKey,
+        taskRecord: saved,
+        task
+      });
+    }
+
     res.json({
       task: {
         ...(saved.task || task),
-        status: nextStatus,
-        progress: nextProgress
+        status: responseStatus,
+        progress: responseProgress
       },
       record: saved
     });
@@ -498,14 +518,36 @@ app.post("/api/videos/:taskId/access", requireAuth, async (req, res) => {
         return;
       }
 
-      file = await ensureArchivedVideoAsset({
+      const archivingRecord = await upsertTaskRecord({
+        userId: req.user.id,
+        taskId: req.params.taskId,
+        clientTaskId: taskRecord.clientTaskId || task.client_task_id,
+        status: "archiving",
+        progress: 100,
+        model: task.model || taskRecord.model,
+        task
+      });
+      if (archivingRecord.file?.objectKey) {
+        res.json(await buildTaskAccessPayload(archivingRecord.file));
+        return;
+      }
+      startArchivedVideoAsset({
         userId: req.user.id,
         taskId: req.params.taskId,
         config,
         apiKey: latestApiKey.apiKey,
-        taskRecord,
+        taskRecord: archivingRecord,
         task
       });
+      res.status(202).json({
+        status: "archiving",
+        task: {
+          ...task,
+          status: "archiving",
+          progress: 100
+        }
+      });
+      return;
     }
 
     res.json(await buildTaskAccessPayload(file));

@@ -28,7 +28,7 @@ const AUDIO_MAX_COUNT = 3;
 const MIN_DURATION = 4;
 const MAX_DURATION = 15;
 const ACTIVE_TASK_STORAGE_KEY_PREFIX = "thinkai_video_studio_active_task_id";
-const POLL_ERROR_RETRY_LIMIT = 6;
+const POLL_ERROR_NOTICE_THRESHOLD = 6;
 
 const FIELD_CONFIG = {
   image: {
@@ -74,6 +74,7 @@ function statusText(status) {
     running: "生成中",
     processing: "处理中",
     completed: "已完成",
+    archiving: "归档中",
     downloaded: "已下载",
     failed: "失败"
   };
@@ -121,11 +122,11 @@ function mergeAssets(current, next) {
 }
 
 function isPollingStatus(status) {
-  return ["queued", "running", "processing"].includes(status);
+  return ["queued", "running", "processing", "completed", "archiving"].includes(status);
 }
 
 function canPreviewStatus(status) {
-  return ["completed", "downloaded"].includes(status);
+  return status === "downloaded";
 }
 
 function toAbsoluteUrl(url) {
@@ -777,6 +778,7 @@ export default function App() {
   const [mentionMenu, setMentionMenu] = useState({ open: false, query: "", range: null, position: null });
   const pollRefs = useRef(new Map());
   const pollErrorCountsRef = useRef(new Map());
+  const pollInFlightRef = useRef(new Set());
   const videoAccessRef = useRef({ taskId: "", file: null });
   const activeUserIdRef = useRef("");
   const promptInputRef = useRef(null);
@@ -920,6 +922,7 @@ export default function App() {
       if (pollRef) window.clearInterval(pollRef);
       pollRefs.current.delete(taskId);
       pollErrorCountsRef.current.delete(taskId);
+      pollInFlightRef.current.delete(taskId);
       if (clearActiveTask) removeActiveTaskId(taskId);
       return;
     }
@@ -929,6 +932,7 @@ export default function App() {
     }
     pollRefs.current.clear();
     pollErrorCountsRef.current.clear();
+    pollInFlightRef.current.clear();
     if (clearActiveTask) {
       setActiveTaskIds([]);
     }
@@ -1093,37 +1097,33 @@ export default function App() {
     const tasks = await loadTasks();
     if (!isCurrentUserRequest(requestUserId)) return { task: null, record: null };
     const currentRecord = tasks.find((item) => item.taskId === taskId);
-    if (data.task.status === "completed" && shouldDownload) {
-      stopPolling(taskId);
-      if (updateCurrentTask) {
-        await loadVideoAccess(taskId);
-      }
-    }
     if (data.task.status === "failed") {
       stopPolling(taskId);
     }
-    if (data.task.status === "downloaded" || currentRecord?.file) {
+    const hasArchivedFile = Boolean(currentRecord?.file);
+    if (data.task.status === "downloaded" || hasArchivedFile) {
       stopPolling(taskId);
     }
-    if (updateCurrentTask && canPreviewStatus(data.task.status)) {
+    if (updateCurrentTask && (canPreviewStatus(data.task.status) || hasArchivedFile)) {
       await loadVideoAccess(taskId);
     }
     return { task: data.task, record: currentRecord || null };
   }
 
   async function tickPolling(taskId, shouldDownload = true, updateCurrentTask = true) {
+    if (pollInFlightRef.current.has(taskId)) return;
+    pollInFlightRef.current.add(taskId);
     try {
       await refreshTask(taskId, shouldDownload, updateCurrentTask);
       pollErrorCountsRef.current.set(taskId, 0);
     } catch (error) {
       const nextErrorCount = (pollErrorCountsRef.current.get(taskId) || 0) + 1;
       pollErrorCountsRef.current.set(taskId, nextErrorCount);
-      if (nextErrorCount >= POLL_ERROR_RETRY_LIMIT) {
-        stopPolling(taskId, false);
-        if (updateCurrentTask) {
-          setMessage(`任务轮询暂时中断，但上游任务可能仍在继续。稍后会自动恢复，或在任务历史中手动打开该任务。原因：${error.message}`);
-        }
+      if (nextErrorCount === POLL_ERROR_NOTICE_THRESHOLD && updateCurrentTask) {
+        setMessage(`任务查询暂时失败，将按当前频率继续查询。原因：${error.message}`);
       }
+    } finally {
+      pollInFlightRef.current.delete(taskId);
     }
   }
 
@@ -1372,6 +1372,15 @@ export default function App() {
     }
   }
 
+  function resumeHistoryTask(record) {
+    setTask(record.task || { id: record.taskId, status: record.status, progress: record.progress });
+    setSubmittedPayload(record.payload || null);
+    setSubmittedMemory(getReusableTaskMemory(record));
+    setVideoFile(null);
+    startPolling(record.taskId, true, true);
+    setMessage(`已恢复任务 ${record.taskId} 的查询。`);
+  }
+
   function reuseHistoryTask(record) {
     const memory = getReusableTaskMemory(record);
     const nextModel = models.some((model) => model.id === memory.model) ? memory.model : defaultForm.model;
@@ -1422,6 +1431,11 @@ export default function App() {
           <code>{record.taskId}</code>
         </button>
         <div className="history-actions">
+          {!record.file && record.status !== "failed" && (
+            <button className="mini-link" onClick={() => closeAndRun(() => resumeHistoryTask(record))}>
+              继续查询
+            </button>
+          )}
           <button className="mini-link" onClick={() => closeAndRun(() => reuseHistoryTask(record))}>
             复用
           </button>

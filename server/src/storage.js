@@ -141,6 +141,12 @@ export async function upsertTaskRecord(record) {
     updatedAt: now
   };
 
+  if (current.file?.objectKey && !record.file?.objectKey && record.status === "archiving") {
+    nextRecord.status = "downloaded";
+    nextRecord.progress = 100;
+    nextRecord.file = current.file;
+  }
+
   const result = await query(
     `INSERT INTO video_tasks (user_id, task_id, client_task_id, status, progress, model, payload, memory, task, file, created_at, updated_at)
      VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb, $11::timestamptz, $12::timestamptz)
