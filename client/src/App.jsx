@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api.js";
 import { CH3_MODELS, filterEnabledModels } from "./models.js";
 import weblogo from "./weblogo.png";
@@ -160,6 +160,43 @@ function getReferenceToken(kind, index) {
 
 const PROMPT_TOKEN_PATTERN = /@(?:参考图|参考视频|音频)\d+/g;
 
+function getPromptTokenDeletion(value, selectionStart, selectionEnd, key) {
+  if (!["Backspace", "Delete"].includes(key)) return null;
+
+  const start = Math.max(0, Number(selectionStart) || 0);
+  const end = Math.max(start, Number(selectionEnd) || start);
+  const collapsed = start === end;
+  const target = key === "Backspace" ? start - 1 : start;
+  let deletionStart = start;
+  let deletionEnd = end;
+  let matched = false;
+  let match;
+
+  PROMPT_TOKEN_PATTERN.lastIndex = 0;
+  while ((match = PROMPT_TOKEN_PATTERN.exec(value)) !== null) {
+    const tokenStart = match.index;
+    const tokenEnd = tokenStart + match[0].length;
+    const overlaps = collapsed
+      ? target >= tokenStart && target < tokenEnd
+      : start < tokenEnd && end > tokenStart;
+
+    if (!overlaps) continue;
+    deletionStart = Math.min(deletionStart, tokenStart);
+    deletionEnd = Math.max(deletionEnd, tokenEnd);
+    matched = true;
+  }
+
+  if (!matched) return null;
+  if (value[deletionStart - 1] === " " && value[deletionEnd] === " ") {
+    deletionEnd += 1;
+  }
+
+  return {
+    value: `${value.slice(0, deletionStart)}${value.slice(deletionEnd)}`,
+    caret: deletionStart
+  };
+}
+
 function syncPromptEditorDom(editor, value, validTokens = new Set()) {
   if (!editor) return;
   const fragment = document.createDocumentFragment();
@@ -191,37 +228,6 @@ function syncPromptEditorDom(editor, value, validTokens = new Set()) {
   }
 
   editor.replaceChildren(fragment);
-}
-
-function renderPromptHighlight(value, validTokens = new Set()) {
-  if (!value) return null;
-
-  const nodes = [];
-  let lastIndex = 0;
-  let match;
-
-  PROMPT_TOKEN_PATTERN.lastIndex = 0;
-  while ((match = PROMPT_TOKEN_PATTERN.exec(value)) !== null) {
-    if (match.index > lastIndex) {
-      nodes.push(value.slice(lastIndex, match.index));
-    }
-    if (validTokens.has(match[0])) {
-      nodes.push(
-        <span className="prompt-reference-token" key={`${match[0]}-${match.index}`}>
-          {match[0]}
-        </span>
-      );
-    } else {
-      nodes.push(match[0]);
-    }
-    lastIndex = match.index + match[0].length;
-  }
-
-  if (lastIndex < value.length) {
-    nodes.push(value.slice(lastIndex));
-  }
-
-  return nodes;
 }
 
 function getPromptNodeText(node) {
@@ -467,7 +473,10 @@ function getActiveMention(value, caret) {
   const atIndex = beforeCaret.lastIndexOf("@");
   if (atIndex < 0) return null;
 
-  const query = beforeCaret.slice(atIndex + 1);
+  const mention = beforeCaret.slice(atIndex);
+  if (/^@(?:参考图|参考视频|音频)\d+$/.test(mention)) return null;
+
+  const query = mention.slice(1);
   if (/\s/.test(query)) return null;
 
   return {
@@ -479,65 +488,21 @@ function getActiveMention(value, caret) {
   };
 }
 
-function getTextareaCaretPosition(input) {
-  if (!input) return { left: 12, top: 12 };
+function getPromptCaretPosition(editor) {
+  const selection = window.getSelection();
+  if (!editor || !selection || selection.rangeCount === 0) return { left: 12, top: 12 };
 
-  const style = window.getComputedStyle(input);
-  const mirror = document.createElement("div");
-  const properties = [
-    "boxSizing",
-    "width",
-    "borderTopWidth",
-    "borderRightWidth",
-    "borderBottomWidth",
-    "borderLeftWidth",
-    "paddingTop",
-    "paddingRight",
-    "paddingBottom",
-    "paddingLeft",
-    "fontFamily",
-    "fontSize",
-    "fontStyle",
-    "fontWeight",
-    "letterSpacing",
-    "lineHeight",
-    "textAlign",
-    "textTransform",
-    "wordSpacing",
-    "textIndent",
-    "whiteSpace",
-    "wordBreak",
-    "overflowWrap"
-  ];
+  const range = selection.getRangeAt(0).cloneRange();
+  if (!editor.contains(range.startContainer)) return { left: 12, top: 12 };
+  range.collapse(true);
 
-  properties.forEach((property) => {
-    mirror.style[property] = style[property];
-  });
-  mirror.style.position = "absolute";
-  mirror.style.visibility = "hidden";
-  mirror.style.overflow = "hidden";
-  mirror.style.top = "0";
-  mirror.style.left = "-9999px";
-  mirror.style.minHeight = "0";
-  mirror.style.height = "auto";
-  mirror.style.whiteSpace = "pre-wrap";
-  mirror.style.overflowWrap = "break-word";
-
-  const caret = input.selectionStart || 0;
-  mirror.textContent = input.value.slice(0, caret);
-  const marker = document.createElement("span");
-  marker.textContent = "\u200b";
-  mirror.appendChild(marker);
-  document.body.appendChild(mirror);
-
-  const lineHeight = Number.parseFloat(style.lineHeight) || Number.parseFloat(style.fontSize) * 1.55 || 20;
-  const position = {
-    left: input.offsetLeft + marker.offsetLeft - input.scrollLeft,
-    top: input.offsetTop + marker.offsetTop - input.scrollTop + lineHeight + 8
+  const editorRect = editor.getBoundingClientRect();
+  const caretRect = range.getBoundingClientRect();
+  const lineHeight = Number.parseFloat(window.getComputedStyle(editor).lineHeight) || 20;
+  return {
+    left: caretRect.left - editorRect.left + editor.scrollLeft,
+    top: (caretRect.height ? caretRect.bottom - editorRect.top : lineHeight) + editor.scrollTop + 8
   };
-
-  document.body.removeChild(mirror);
-  return position;
 }
 
 function VideoAssetPreview({ asset }) {
@@ -782,7 +747,6 @@ export default function App() {
   const videoAccessRef = useRef({ taskId: "", file: null });
   const activeUserIdRef = useRef("");
   const promptInputRef = useRef(null);
-  const promptHighlightRef = useRef(null);
   const lastPromptSelectionRef = useRef(null);
 
   const selectedModel = useMemo(
@@ -863,6 +827,24 @@ export default function App() {
       return next;
     });
   }, [selectedModel]);
+
+  useLayoutEffect(() => {
+    const editor = promptInputRef.current;
+    if (!editor) return;
+
+    const currentValue = getPromptNodeText(editor);
+    const renderedTokens = getRenderedPromptTokens(editor);
+    const expectedTokens = new Set(
+      Array.from(validPromptTokens).filter((token) => form.prompt.includes(token))
+    );
+    const tokensMatch = renderedTokens.size === expectedTokens.size &&
+      Array.from(expectedTokens).every((token) => renderedTokens.has(token));
+    if (currentValue === form.prompt && tokensMatch) return;
+
+    const selection = document.activeElement === editor ? getPromptEditorSelection(editor) : null;
+    syncPromptEditorDom(editor, form.prompt, validPromptTokens);
+    if (selection) setPromptEditorCaret(editor, selection.end);
+  }, [form.prompt, validPromptTokenKey, currentUser?.id, authLoading]);
 
   useEffect(() => {
     return () => {
@@ -1200,33 +1182,29 @@ export default function App() {
   }
 
   function getPromptSelection() {
-    const input = promptInputRef.current;
-    if (!input) return lastPromptSelectionRef.current;
-    if (document.activeElement !== input) return lastPromptSelectionRef.current;
-    return {
-      start: input.selectionStart,
-      end: input.selectionEnd
-    };
+    const editor = promptInputRef.current;
+    if (!editor || document.activeElement !== editor) return lastPromptSelectionRef.current;
+    return getPromptEditorSelection(editor) || lastPromptSelectionRef.current;
   }
 
-  function updateMentionMenuFromInput(input) {
-    lastPromptSelectionRef.current = {
-      start: input.selectionStart,
-      end: input.selectionEnd
-    };
-    syncPromptHighlightScroll(input);
-    const activeMention = getActiveMention(input.value, input.selectionStart);
+  function updateMentionMenuFromInput(editor) {
+    const selection = getPromptEditorSelection(editor);
+    if (!selection) return;
+    lastPromptSelectionRef.current = selection;
+
+    const value = getPromptNodeText(editor);
+    const activeMention = getActiveMention(value, selection.end);
     if (!activeMention) {
       setMentionMenu({ open: false, query: "", range: null, position: null });
       return;
     }
 
-    const caretPosition = getTextareaCaretPosition(input);
+    const caretPosition = getPromptCaretPosition(editor);
     const menuWidth = 360;
-    const maxLeft = Math.max(12, input.offsetLeft + input.clientWidth - menuWidth - 12);
-    const left = Math.min(Math.max(caretPosition.left, input.offsetLeft + 12), maxLeft);
-    const maxTop = input.offsetTop + input.clientHeight - 120;
-    const top = Math.min(Math.max(caretPosition.top, input.offsetTop + 12), maxTop);
+    const maxLeft = Math.max(12, editor.clientWidth - menuWidth - 12);
+    const left = Math.min(Math.max(caretPosition.left, 12), maxLeft);
+    const maxTop = editor.clientHeight - 120;
+    const top = Math.min(Math.max(caretPosition.top, 12), maxTop);
 
     setMentionMenu({
       open: true,
@@ -1236,14 +1214,72 @@ export default function App() {
     });
   }
 
-  function syncPromptHighlightScroll(input = promptInputRef.current) {
-    if (!input || !promptHighlightRef.current) return;
-    promptHighlightRef.current.scrollTop = input.scrollTop;
-    promptHighlightRef.current.scrollLeft = input.scrollLeft;
-  }
-
   function closeMentionMenu() {
     setMentionMenu({ open: false, query: "", range: null, position: null });
+  }
+
+  function handlePromptTokenDeletion(event) {
+    if (event.isComposing) return false;
+    const editor = event.currentTarget;
+    const selection = getPromptEditorSelection(editor);
+    if (!selection) return false;
+    const deletion = getPromptTokenDeletion(
+      getPromptNodeText(editor),
+      selection.start,
+      selection.end,
+      event.key
+    );
+    if (!deletion) return false;
+
+    event.preventDefault();
+    closeMentionMenu();
+    setForm((current) => ({ ...current, prompt: deletion.value }));
+    lastPromptSelectionRef.current = { start: deletion.caret, end: deletion.caret };
+
+    window.requestAnimationFrame(() => {
+      const nextInput = promptInputRef.current;
+      if (!nextInput) return;
+      syncPromptEditorDom(nextInput, deletion.value, validPromptTokens);
+      nextInput.focus();
+      setPromptEditorCaret(nextInput, deletion.caret);
+    });
+    return true;
+  }
+
+  function handlePromptInput(event) {
+    const editor = event.currentTarget;
+    const selection = getPromptEditorSelection(editor);
+    let nextPrompt = getPromptNodeText(editor);
+
+    if (nextPrompt.length > PROMPT_MAX_LENGTH) {
+      nextPrompt = nextPrompt.slice(0, PROMPT_MAX_LENGTH);
+      syncPromptEditorDom(editor, nextPrompt, validPromptTokens);
+      setPromptEditorCaret(editor, Math.min(selection?.end || PROMPT_MAX_LENGTH, PROMPT_MAX_LENGTH));
+    }
+
+    setForm((current) => ({ ...current, prompt: nextPrompt }));
+    updateMentionMenuFromInput(editor);
+  }
+
+  function handlePromptPaste(event) {
+    event.preventDefault();
+    const editor = event.currentTarget;
+    const selection = getPromptEditorSelection(editor) || { start: form.prompt.length, end: form.prompt.length };
+    const source = getPromptNodeText(editor);
+    const availableLength = PROMPT_MAX_LENGTH - (source.length - (selection.end - selection.start));
+    const pastedText = event.clipboardData.getData("text/plain").slice(0, Math.max(0, availableLength));
+    const nextPrompt = `${source.slice(0, selection.start)}${pastedText}${source.slice(selection.end)}`;
+    const nextCaret = selection.start + pastedText.length;
+
+    setForm((current) => ({ ...current, prompt: nextPrompt }));
+    window.requestAnimationFrame(() => {
+      const nextEditor = promptInputRef.current;
+      if (!nextEditor) return;
+      syncPromptEditorDom(nextEditor, nextPrompt, validPromptTokens);
+      nextEditor.focus();
+      setPromptEditorCaret(nextEditor, nextCaret);
+      updateMentionMenuFromInput(nextEditor);
+    });
   }
 
   function insertAssetMention(kind, asset, options = {}) {
@@ -1256,6 +1292,8 @@ export default function App() {
 
     const selection = options.selection || getPromptSelection();
     let nextCaret = null;
+    let nextPrompt = null;
+    let insertedToken = null;
     setMessage("");
     closeMentionMenu();
     setForm((current) => {
@@ -1268,6 +1306,8 @@ export default function App() {
       const assetIndex = nextAssets.findIndex((item) => getAssetKey(item) === getAssetKey(asset));
       const token = getReferenceToken(kind, assetIndex + 1);
       const inserted = insertTextAtSelection(current.prompt, token, selection);
+      insertedToken = token;
+      nextPrompt = inserted.value;
       nextCaret = inserted.caret;
       return {
         ...current,
@@ -1279,10 +1319,12 @@ export default function App() {
     window.requestAnimationFrame(() => {
       const input = promptInputRef.current;
       if (!input) return;
+      if (nextPrompt !== null) {
+        syncPromptEditorDom(input, nextPrompt, new Set([...validPromptTokens, insertedToken]));
+      }
       input.focus();
       if (nextCaret !== null) {
-        input.setSelectionRange(nextCaret, nextCaret);
-        syncPromptHighlightScroll(input);
+        setPromptEditorCaret(input, nextCaret);
       }
     });
   }
@@ -1826,32 +1868,30 @@ export default function App() {
             </div>
           </div>
 
-          <label className="prompt-box">
+          <div className="prompt-box">
             <span className="field-top">
               <span>Prompt</span>
               <span className={`counter ${promptTooLong ? "invalid" : ""}`}>{promptLength}/{PROMPT_MAX_LENGTH}</span>
             </span>
             <div className="prompt-editor">
-              <div className="prompt-highlight" ref={promptHighlightRef} aria-hidden="true">
-                {renderPromptHighlight(form.prompt, validPromptTokens)}
-              </div>
-              <textarea
+              <div
                 ref={promptInputRef}
-                value={form.prompt}
-                maxLength={PROMPT_MAX_LENGTH}
+                className="prompt-editor-input"
+                contentEditable
+                suppressContentEditableWarning
+                role="textbox"
+                aria-label="Prompt"
+                aria-multiline="true"
                 aria-invalid={promptTooLong || promptForSubmitTooLong}
-                placeholder="必填，最长 6000 字符。建议写清主体、动作、镜头运动、构图、光线、节奏和稳定性要求。"
-                onChange={(event) => {
-                  const nextPrompt = event.target.value;
-                  setForm((current) => ({ ...current, prompt: nextPrompt }));
-                  updateMentionMenuFromInput(event.target);
-                }}
-                onScroll={(event) => syncPromptHighlightScroll(event.target)}
-                onClick={(event) => updateMentionMenuFromInput(event.target)}
+                data-placeholder="必填，最长 6000 字符。建议写清主体、动作、镜头运动、构图、光线、节奏和稳定性要求。"
+                onInput={handlePromptInput}
+                onPaste={handlePromptPaste}
+                onClick={(event) => updateMentionMenuFromInput(event.currentTarget)}
                 onKeyUp={(event) => {
-                  if (event.key !== "Escape") updateMentionMenuFromInput(event.target);
+                  if (event.key !== "Escape") updateMentionMenuFromInput(event.currentTarget);
                 }}
                 onKeyDown={(event) => {
+                  if (handlePromptTokenDeletion(event)) return;
                   if (event.key === "Escape") {
                     event.preventDefault();
                     closeMentionMenu();
@@ -1923,7 +1963,7 @@ export default function App() {
                 </div>
               </div>
             )}
-          </label>
+          </div>
         </section>
 
         <aside className="settings-panel">
