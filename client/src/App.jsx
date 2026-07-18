@@ -452,7 +452,7 @@ function countMemoryReferences(memory) {
 
 function buildPromptWithReferenceTokens(formValue) {
   return createReferenceBindings(formValue).reduce((prompt, binding) => (
-    prompt.replace(new RegExp(escapeRegExp(binding.token), "g"), `[${binding.label}]`)
+    prompt.replace(new RegExp(escapeRegExp(binding.token), "g"), binding.label)
   ), formValue.prompt.trim());
 }
 
