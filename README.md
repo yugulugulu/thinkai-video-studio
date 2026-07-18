@@ -2,6 +2,8 @@
 
 本地 React + Express 前后端分离视频生成控制台，支持配置 Base URL、API Key、模型、分辨率、素材 URL，并通过 CH3 `/v1/videos` 创建、轮询和下载视频。
 
+ThinkAI 上游接口的模型、参数、鉴权和调用示例见 [ThinkAI CH3 视频生成 API 接口文档](./THINKAI_CH3_API.md)。
+
 ## 本地数据库
 
 项目使用本地 PostgreSQL，默认连接如下：
@@ -11,17 +13,6 @@
 - Database: `thinkai_video_studio`
 - User: `postgres`
 - Password: `postgres`
-
-## 环境变量
-
-前后端分别使用两套环境文件：
-
-- [server/.env.development](/Users/pakyo/Coding/AI视频/server/.env.development)
-- [server/.env.production](/Users/pakyo/Coding/AI视频/server/.env.production)
-- [client/.env.development](/Users/pakyo/Coding/AI视频/client/.env.development)
-- [client/.env.production](/Users/pakyo/Coding/AI视频/client/.env.production)
-
-开发环境已经填好本地数据库和本地 API 地址。生产环境文件只保留空占位，需要上线前自行填写服务器数据库、JWT 和前端 API 地址。
 
 启动数据库：
 
