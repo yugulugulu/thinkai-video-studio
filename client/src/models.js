@@ -1,6 +1,60 @@
-export const CH3_MODELS = [
+const CH3_RULES = {
+  promptMinLength: 1,
+  promptMaxLength: 4000,
+  minDuration: 4,
+  maxDuration: 15,
+  defaultDuration: 10,
+  maxReferences: 15
+};
+
+const CH1_RULES = {
+  group: "ch1",
+  aspectRatios: ["16:9", "9:16", "1:1", "3:4", "4:3", "21:9"],
+  promptMinLength: 1,
+  promptMaxLength: 5000,
+  minDuration: 4,
+  maxDuration: 15,
+  defaultDuration: 10,
+  maxReferences: 15,
+  textToVideo: true,
+  requiresReference: false,
+  supportsVideoReference: true
+};
+
+export const VIDEO_MODELS = [
+  {
+    id: "ch1-sd-2.0-720p",
+    name: "SD2 720p",
+    priceLabel: "单次9.35元",
+    description: "CH1 SD2 满血版，支持纯文本和多素材参考",
+    tooltipTitle: "CH1 SD2 满血版，720p 输出",
+    tooltipBody: "支持纯文本生成，以及最多 9 张图片、3 条视频和 3 条音频参考。适合常规清晰度的视频生成。",
+    resolutions: ["720p"],
+    ...CH1_RULES
+  },
+  {
+    id: "ch1-sd-2.0-1080p",
+    name: "SD2 1080p",
+    priceLabel: "单次23.375元",
+    description: "CH1 SD2 满血高清版，支持纯文本和多素材参考",
+    tooltipTitle: "CH1 SD2 满血版，1080p 输出",
+    tooltipBody: "支持纯文本生成，以及最多 9 张图片、3 条视频和 3 条音频参考。适合对成片清晰度要求更高的场景。",
+    resolutions: ["1080p"],
+    ...CH1_RULES
+  },
+  {
+    id: "ch1-sd-2.0-4k",
+    name: "SD2 4K",
+    priceLabel: "单次42.5元",
+    description: "CH1 SD2 满血 4K 版，支持纯文本和多素材参考",
+    tooltipTitle: "CH1 SD2 满血版，4K 输出",
+    tooltipBody: "支持纯文本生成，以及最多 9 张图片、3 条视频和 3 条音频参考。适合高分辨率成片和后续剪辑。",
+    resolutions: ["4k"],
+    ...CH1_RULES
+  },
   {
     id: "ch3-sd-2.0-xh",
+    group: "ch3",
     name: "SD2 XH",
     priceLabel: "单次9.35元",
     description: "XH 质量优先，支持纯文本和多素材参考",
@@ -9,10 +63,12 @@ export const CH3_MODELS = [
     resolutions: ["720p"],
     textToVideo: true,
     requiresReference: false,
-    supportsVideoReference: true
+    supportsVideoReference: true,
+    ...CH3_RULES
   },
   {
     id: "ch3-sd-2.0-xh-1080p",
+    group: "ch3",
     name: "SD2 XH 1080p",
     priceLabel: "单次23.375元",
     description: "XH 高清版本，支持纯文本和多素材参考",
@@ -21,10 +77,12 @@ export const CH3_MODELS = [
     resolutions: ["1080p"],
     textToVideo: true,
     requiresReference: false,
-    supportsVideoReference: true
+    supportsVideoReference: true,
+    ...CH3_RULES
   },
   {
     id: "ch3-sd-2.0-xh-4k",
+    group: "ch3",
     name: "SD2 XH 4K",
     priceLabel: "单次42.5元",
     description: "XH 4K 版本，支持纯文本和多素材参考",
@@ -33,12 +91,32 @@ export const CH3_MODELS = [
     resolutions: ["4k"],
     textToVideo: true,
     requiresReference: false,
-    supportsVideoReference: true
+    supportsVideoReference: true,
+    ...CH3_RULES
+  },
+  {
+    id: "ch9-sd-2.0-ck2-720p",
+    group: "ch9",
+    name: "SD2 CK2 720p",
+    priceLabel: "单次9.35元",
+    description: "CH9 CK2 通用视频生成模型",
+    tooltipTitle: "CH9 SD2 CK2，通用多素材生成",
+    tooltipBody: "支持纯文本，以及图片、视频、音频混合参考。输出 720p，时长支持 10-15 秒。",
+    resolutions: ["720p"],
+    textToVideo: true,
+    requiresReference: false,
+    supportsVideoReference: true,
+    promptMinLength: 10,
+    promptMaxLength: 5000,
+    minDuration: 10,
+    maxDuration: 15,
+    defaultDuration: 10,
+    maxReferences: 12
   }
 ];
 
-export const ENABLED_MODEL_IDS = new Set(CH3_MODELS.map((model) => model.id));
-const MODEL_META_MAP = new Map(CH3_MODELS.map((model) => [model.id, model]));
+export const ENABLED_MODEL_IDS = new Set(VIDEO_MODELS.map((model) => model.id));
+const MODEL_META_MAP = new Map(VIDEO_MODELS.map((model) => [model.id, model]));
 
 export function filterEnabledModels(models) {
   return (models || [])

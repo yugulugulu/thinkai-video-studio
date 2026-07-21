@@ -10,7 +10,7 @@ import { createVideoDownloadToken, getApiKeyByUserId, loginUser, registerUser, r
 import { initDatabase } from "./db.js";
 import { envNumber } from "./env.js";
 import { createMediaAsset, listMediaAssetsByUserId, normalizeUploadedFilename, repairMediaAssetFilenames, validateUploadInput } from "./media.js";
-import { CH3_MODELS } from "./models.js";
+import { VIDEO_MODELS } from "./models.js";
 import { getVideoObjectAccessUrls, isOssPublicReadEnabled, uploadBufferToOss, uploadVideoStreamToOss } from "./oss.js";
 import { buildReferences, createVideoTask, getVideoContentStream, getVideoTask } from "./thinkaiClient.js";
 import { ensureStorage, getTaskRecord, migrateTasksFromFile, publicConfig, readConfig, readTasks, upsertTaskRecord, writeConfig } from "./storage.js";
@@ -282,7 +282,7 @@ app.get("/api/health", (_req, res) => {
 });
 
 app.get("/api/models", (_req, res) => {
-  res.json({ models: CH3_MODELS });
+  res.json({ models: VIDEO_MODELS });
 });
 
 app.post("/api/auth/register", async (req, res) => {

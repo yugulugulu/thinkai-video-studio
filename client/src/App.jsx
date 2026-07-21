@@ -1,13 +1,13 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api.js";
-import { CH3_MODELS, filterEnabledModels } from "./models.js";
+import { VIDEO_MODELS, filterEnabledModels } from "./models.js";
 import weblogo from "./weblogo.png";
 
 const defaultForm = {
   model: "ch3-sd-2.0-xh",
   prompt: "一位穿浅色风衣的年轻女性在雨后的城市街道自然向前走，镜头缓慢推进，路面有柔和倒影，电影感，动作自然稳定",
   aspect_ratio: "16:9",
-  duration: 8,
+  duration: 10,
   resolution: "720p",
   images: [],
   videos: [],
@@ -21,12 +21,23 @@ const defaultAuthForm = {
   password: ""
 };
 
-const PROMPT_MAX_LENGTH = 6000;
+const MODEL_GROUPS = [
+  { id: "ch1", label: "CH1" },
+  { id: "ch3", label: "CH3" },
+  { id: "ch9", label: "CH9" }
+];
 const IMAGE_MAX_COUNT = 9;
 const VIDEO_MAX_COUNT = 3;
 const AUDIO_MAX_COUNT = 3;
-const MIN_DURATION = 4;
-const MAX_DURATION = 15;
+const CLIENT_TASK_ID_PATTERN = /^[A-Za-z0-9_.-]{1,128}$/;
+const ASPECT_RATIO_LABELS = {
+  "16:9": "横屏",
+  "9:16": "竖屏",
+  "1:1": "方形",
+  "3:4": "竖幅",
+  "4:3": "横幅",
+  "21:9": "超宽屏"
+};
 const ACTIVE_TASK_STORAGE_KEY_PREFIX = "thinkai_video_studio_active_task_id";
 const POLL_ERROR_NOTICE_THRESHOLD = 6;
 
@@ -40,7 +51,7 @@ const FIELD_CONFIG = {
     maxCount: IMAGE_MAX_COUNT,
     emptyHint: "支持 JPG、PNG、WEBP 等图片文件，最多 9 张。",
     requiredHint: "当前模型不支持纯文本，至少要上传或选择 1 张参考图片。",
-    optionalHint: "XH 系列可留空做纯文本生成，也可以上传图片增强稳定性和风格一致性。"
+    optionalHint: "当前模型可留空做纯文本生成，也可以上传图片增强稳定性和风格一致性。"
   },
   video: {
     field: "videos",
@@ -49,7 +60,7 @@ const FIELD_CONFIG = {
     uploadLabel: "上传视频",
     accept: "video/*",
     maxCount: VIDEO_MAX_COUNT,
-    emptyHint: "仅 XH / XH 1080p / XH 4K 支持，最多 3 条。",
+    emptyHint: "当前支持多素材参考的模型最多可选 3 条。",
     optionalHint: "可选。建议上传短视频片段作为运动参考。"
   },
   audio: {
@@ -71,6 +82,7 @@ function Icon({ name, size = 18, className = "" }) {
 function statusText(status) {
   const map = {
     queued: "排队中",
+    in_progress: "生成中",
     running: "生成中",
     processing: "处理中",
     completed: "已完成",
@@ -122,7 +134,17 @@ function mergeAssets(current, next) {
 }
 
 function isPollingStatus(status) {
-  return ["queued", "running", "processing", "completed", "archiving"].includes(status);
+  return ["queued", "in_progress", "running", "processing", "completed", "archiving"].includes(status);
+}
+
+function taskFromRecord(record) {
+  if (!record) return null;
+  return {
+    ...(record.task || {}),
+    id: record.taskId || record.task?.id,
+    status: record.status || record.task?.status,
+    progress: Number(record.progress ?? record.task?.progress ?? 0)
+  };
 }
 
 function canPreviewStatus(status) {
@@ -717,7 +739,8 @@ function ModelTooltip({ model }) {
 }
 
 export default function App() {
-  const [models, setModels] = useState(CH3_MODELS);
+  const [models, setModels] = useState(VIDEO_MODELS);
+  const [activeModelGroup, setActiveModelGroup] = useState("ch3");
   const [config, setConfig] = useState({ baseUrl: "https://www.thinkai.tv", apiKey: "", hasApiKey: false });
   const [configOpen, setConfigOpen] = useState(false);
   const [form, setForm] = useState(defaultForm);
@@ -753,8 +776,21 @@ export default function App() {
     () => models.find((model) => model.id === form.model) || models[0],
     [models, form.model]
   );
+  const visibleModels = useMemo(
+    () => models.filter((model) => (model.group || "ch3") === activeModelGroup),
+    [activeModelGroup, models]
+  );
+  const promptMinLength = selectedModel?.promptMinLength || 1;
+  const promptMaxLength = selectedModel?.promptMaxLength || 4000;
+  const allowedDurations = selectedModel?.allowedDurations || null;
+  const aspectRatios = selectedModel?.aspectRatios || ["16:9", "9:16"];
+  const minDuration = selectedModel?.minDuration || Math.min(...(allowedDurations || [4]));
+  const maxDuration = selectedModel?.maxDuration || Math.max(...(allowedDurations || [15]));
+  const durationRangeLabel = allowedDurations ? allowedDurations.join(" / ") : `${minDuration}-${maxDuration}`;
   const promptLength = form.prompt.length;
+  const promptTrimmedLength = form.prompt.trim().length;
   const promptForSubmit = useMemo(() => buildPromptWithReferenceTokens(form), [form]);
+  const promptForSubmitTrimmedLength = promptForSubmit.trim().length;
   const referenceBindings = useMemo(() => createReferenceBindings(form), [form]);
   const validPromptTokens = useMemo(
     () => new Set(referenceBindings.map((binding) => binding.token)),
@@ -764,26 +800,37 @@ export default function App() {
     () => referenceBindings.map((binding) => binding.token).join("|"),
     [referenceBindings]
   );
-  const promptForSubmitTooLong = promptForSubmit.length > PROMPT_MAX_LENGTH;
+  const promptTooShort = promptTrimmedLength > 0 && promptTrimmedLength < promptMinLength;
+  const promptForSubmitTooShort = promptForSubmitTrimmedLength > 0 && promptForSubmitTrimmedLength < promptMinLength;
+  const promptForSubmitTooLong = promptForSubmitTrimmedLength > promptMaxLength;
   const durationNumber = Number(form.duration);
-  const durationInvalid = !Number.isFinite(durationNumber) || durationNumber < MIN_DURATION || durationNumber > MAX_DURATION;
-  const promptTooLong = promptLength > PROMPT_MAX_LENGTH;
+  const durationInvalid = !Number.isFinite(durationNumber) || (allowedDurations
+    ? !allowedDurations.includes(durationNumber)
+    : durationNumber < minDuration || durationNumber > maxDuration);
+  const promptTooLong = promptTrimmedLength > promptMaxLength;
+  const clientTaskIdInvalid = Boolean(form.client_task_id.trim() && !CLIENT_TASK_ID_PATTERN.test(form.client_task_id.trim()));
   const referencesMissing = Boolean(selectedModel?.requiresReference && form.images.length === 0);
   const referencesOverLimit =
     form.images.length > IMAGE_MAX_COUNT ||
     form.videos.length > VIDEO_MAX_COUNT ||
     form.audios.length > AUDIO_MAX_COUNT;
+  const totalReferences = form.images.length + form.videos.length + form.audios.length;
+  const totalReferencesOverLimit = Boolean(selectedModel?.maxReferences && totalReferences > selectedModel.maxReferences);
   const unsupportedVideoReference = Boolean(form.videos.length && selectedModel && !selectedModel.supportsVideoReference);
   const isGenerating = busy || isPollingStatus(task?.status);
   const canSubmit =
     Boolean(form.prompt.trim()) &&
     !busy &&
     !promptTooLong &&
+    !promptTooShort &&
     !promptForSubmitTooLong &&
+    !promptForSubmitTooShort &&
     !durationInvalid &&
     !referencesMissing &&
     !referencesOverLimit &&
+    !totalReferencesOverLimit &&
     !unsupportedVideoReference &&
+    !clientTaskIdInvalid &&
     !uploading.image &&
     !uploading.video &&
     !uploading.audio;
@@ -821,8 +868,19 @@ export default function App() {
       if (!selectedModel.resolutions.includes(current.resolution)) {
         next.resolution = selectedModel.resolutions[0];
       }
+      const modelAspectRatios = selectedModel.aspectRatios || ["16:9", "9:16"];
+      if (!modelAspectRatios.includes(current.aspect_ratio)) {
+        next.aspect_ratio = modelAspectRatios[0];
+      }
       if (!selectedModel.supportsVideoReference && current.videos.length) {
         next.videos = [];
+      }
+      const currentDuration = Number(current.duration);
+      const durationIsValid = selectedModel.allowedDurations
+        ? selectedModel.allowedDurations.includes(currentDuration)
+        : currentDuration >= (selectedModel.minDuration || 4) && currentDuration <= (selectedModel.maxDuration || 15);
+      if (!durationIsValid) {
+        next.duration = selectedModel.defaultDuration || 10;
       }
       return next;
     });
@@ -971,14 +1029,18 @@ export default function App() {
 
   function getFormError() {
     if (!form.prompt.trim()) return "请输入 prompt";
-    if (promptTooLong) return `Prompt 最长 ${PROMPT_MAX_LENGTH} 字符`;
-    if (promptForSubmitTooLong) return `注入引用后的 Prompt 最长 ${PROMPT_MAX_LENGTH} 字符`;
-    if (durationInvalid) return `时长必须在 ${MIN_DURATION}-${MAX_DURATION} 秒之间`;
+    if (promptTooShort) return `Prompt 最少 ${promptMinLength} 字符`;
+    if (promptTooLong) return `Prompt 最长 ${promptMaxLength} 字符`;
+    if (promptForSubmitTooShort) return `注入引用后的 Prompt 最少 ${promptMinLength} 字符`;
+    if (promptForSubmitTooLong) return `注入引用后的 Prompt 最长 ${promptMaxLength} 字符`;
+    if (durationInvalid) return `时长仅支持 ${durationRangeLabel} 秒`;
     if (referencesMissing) return `${selectedModel.id} 不支持纯文本生成，至少需要 1 张参考图片`;
     if (form.images.length > IMAGE_MAX_COUNT) return `参考图片最多 ${IMAGE_MAX_COUNT} 张`;
     if (form.videos.length > VIDEO_MAX_COUNT) return `参考视频最多 ${VIDEO_MAX_COUNT} 条`;
     if (form.audios.length > AUDIO_MAX_COUNT) return `参考音频最多 ${AUDIO_MAX_COUNT} 条`;
+    if (totalReferencesOverLimit) return `当前模型参考素材总数最多 ${selectedModel.maxReferences} 个`;
     if (unsupportedVideoReference) return `${selectedModel.id} 不支持参考视频`;
+    if (clientTaskIdInvalid) return "幂等 ID 最多 128 字符，且只能包含字母、数字、下划线、短横线和点";
     if (uploading.image || uploading.video || uploading.audio) return "素材还在上传中，请稍后再提交";
     return "";
   }
@@ -1079,11 +1141,8 @@ export default function App() {
     const tasks = await loadTasks();
     if (!isCurrentUserRequest(requestUserId)) return { task: null, record: null };
     const currentRecord = tasks.find((item) => item.taskId === taskId);
-    if (data.task.status === "failed") {
-      stopPolling(taskId);
-    }
     const hasArchivedFile = Boolean(currentRecord?.file);
-    if (data.task.status === "downloaded" || hasArchivedFile) {
+    if (!isPollingStatus(data.task.status) || hasArchivedFile) {
       stopPolling(taskId);
     }
     if (updateCurrentTask && (canPreviewStatus(data.task.status) || hasArchivedFile)) {
@@ -1251,10 +1310,10 @@ export default function App() {
     const selection = getPromptEditorSelection(editor);
     let nextPrompt = getPromptNodeText(editor);
 
-    if (nextPrompt.length > PROMPT_MAX_LENGTH) {
-      nextPrompt = nextPrompt.slice(0, PROMPT_MAX_LENGTH);
+    if (nextPrompt.length > promptMaxLength) {
+      nextPrompt = nextPrompt.slice(0, promptMaxLength);
       syncPromptEditorDom(editor, nextPrompt, validPromptTokens);
-      setPromptEditorCaret(editor, Math.min(selection?.end || PROMPT_MAX_LENGTH, PROMPT_MAX_LENGTH));
+      setPromptEditorCaret(editor, Math.min(selection?.end || promptMaxLength, promptMaxLength));
     }
 
     setForm((current) => ({ ...current, prompt: nextPrompt }));
@@ -1266,7 +1325,7 @@ export default function App() {
     const editor = event.currentTarget;
     const selection = getPromptEditorSelection(editor) || { start: form.prompt.length, end: form.prompt.length };
     const source = getPromptNodeText(editor);
-    const availableLength = PROMPT_MAX_LENGTH - (source.length - (selection.end - selection.start));
+    const availableLength = promptMaxLength - (source.length - (selection.end - selection.start));
     const pastedText = event.clipboardData.getData("text/plain").slice(0, Math.max(0, availableLength));
     const nextPrompt = `${source.slice(0, selection.start)}${pastedText}${source.slice(selection.end)}`;
     const nextCaret = selection.start + pastedText.length;
@@ -1415,7 +1474,7 @@ export default function App() {
   }
 
   function resumeHistoryTask(record) {
-    setTask(record.task || { id: record.taskId, status: record.status, progress: record.progress });
+    setTask(taskFromRecord(record));
     setSubmittedPayload(record.payload || null);
     setSubmittedMemory(getReusableTaskMemory(record));
     setVideoFile(null);
@@ -1437,11 +1496,17 @@ export default function App() {
       : modelConfig?.resolutions?.[0] || defaultForm.resolution;
     const recalledAssets = [...nextImages, ...nextVideos, ...nextAudios];
 
+    setActiveModelGroup(modelConfig?.group || "ch3");
+
     setForm({
       model: nextModel,
       prompt: memory.editorPrompt || memory.submittedPrompt || "",
-      aspect_ratio: ["16:9", "9:16"].includes(memory.aspect_ratio) ? memory.aspect_ratio : defaultForm.aspect_ratio,
-      duration: Number.isFinite(Number(memory.duration)) && Number(memory.duration) > 0 ? Number(memory.duration) : defaultForm.duration,
+      aspect_ratio: (modelConfig?.aspectRatios || ["16:9", "9:16"]).includes(memory.aspect_ratio)
+        ? memory.aspect_ratio
+        : defaultForm.aspect_ratio,
+      duration: Number.isFinite(Number(memory.duration)) && Number(memory.duration) > 0
+        ? Number(memory.duration)
+        : modelConfig?.defaultDuration || defaultForm.duration,
       resolution: nextResolution,
       images: nextImages,
       videos: nextVideos,
@@ -1473,7 +1538,7 @@ export default function App() {
           <code>{record.taskId}</code>
         </button>
         <div className="history-actions">
-          {!record.file && record.status !== "failed" && (
+          {!record.file && isPollingStatus(record.status) && (
             <button className="mini-link" onClick={() => closeAndRun(() => resumeHistoryTask(record))}>
               继续查询
             </button>
@@ -1490,17 +1555,22 @@ export default function App() {
   }
 
   useEffect(() => {
-    if (!currentUser || !taskHistory.length) return;
+    if (!currentUser) return;
 
-    const activeTaskIds = getActiveTaskIds(currentUser.id);
-    const resumableTasks = taskHistory.filter((item) => (
-      activeTaskIds.includes(item.taskId) || isPollingStatus(item.status)
-    ));
+    const resumableTasks = taskHistory.filter((item) => isPollingStatus(item.status));
+    const resumableTaskIds = new Set(resumableTasks.map((item) => item.taskId));
+
+    for (const pollingTaskId of pollRefs.current.keys()) {
+      if (!resumableTaskIds.has(pollingTaskId)) {
+        stopPolling(pollingTaskId, false);
+      }
+    }
+    setActiveTaskIds(Array.from(resumableTaskIds), currentUser.id);
 
     if (!resumableTasks.length) return;
     const visibleTask = task?.id ? null : resumableTasks[0];
     if (visibleTask) {
-      setTask(visibleTask.task || { id: visibleTask.taskId, status: visibleTask.status, progress: visibleTask.progress });
+      setTask(taskFromRecord(visibleTask));
       setSubmittedPayload(visibleTask.payload || null);
       setSubmittedMemory(getReusableTaskMemory(visibleTask));
       if (canPreviewStatus(visibleTask.status)) {
@@ -1767,26 +1837,52 @@ export default function App() {
               <Icon name="✦" />
               <span>模型选择</span>
             </div>
-            {models.map((model) => (
-              <div key={model.id} className="model-option-wrap">
+            <div className="model-group-tabs" role="tablist" aria-label="模型分组">
+              {MODEL_GROUPS.map((group) => (
                 <button
-                  className={`model-option ${form.model === model.id ? "active" : ""}`}
-                  onClick={() => setForm((current) => ({
-                    ...current,
-                    model: model.id,
-                    resolution: model.resolutions[0],
-                    videos: model.supportsVideoReference ? current.videos : []
-                  }))}
+                  type="button"
+                  role="tab"
+                  aria-selected={activeModelGroup === group.id}
+                  className={`model-group-tab ${activeModelGroup === group.id ? "active" : ""}`}
+                  key={group.id}
+                  onClick={() => setActiveModelGroup(group.id)}
                 >
-                  <span className="model-option-head">
-                    <span>{model.name}</span>
-                    {model.priceLabel ? <em className="model-price">{model.priceLabel}</em> : null}
-                  </span>
-                  <small>{model.id}</small>
+                  {group.label}
                 </button>
-                <ModelTooltip model={model} />
-              </div>
-            ))}
+              ))}
+            </div>
+            <div className="model-group-content" role="tabpanel">
+              {visibleModels.length ? visibleModels.map((model) => (
+                <div key={model.id} className="model-option-wrap">
+                  <button
+                    className={`model-option ${form.model === model.id ? "active" : ""}`}
+                    onClick={() => setForm((current) => ({
+                      ...current,
+                      model: model.id,
+                      resolution: model.resolutions[0],
+                      duration: model.allowedDurations?.includes(Number(current.duration)) || (
+                        !model.allowedDurations &&
+                        Number(current.duration) >= (model.minDuration || 4) &&
+                        Number(current.duration) <= (model.maxDuration || 15)
+                      ) ? current.duration : model.defaultDuration || 10,
+                      videos: model.supportsVideoReference ? current.videos : []
+                    }))}
+                  >
+                    <span className="model-option-head">
+                      <span>{model.name}</span>
+                      {model.priceLabel ? <em className="model-price">{model.priceLabel}</em> : null}
+                    </span>
+                    <small>{model.id}</small>
+                  </button>
+                  <ModelTooltip model={model} />
+                </div>
+              )) : (
+                <div className="model-group-empty">
+                  <strong>暂无可用模型</strong>
+                  <span>{activeModelGroup.toUpperCase()} 模型即将接入</span>
+                </div>
+              )}
+            </div>
           </div>
           <aside className="result-panel">
             <div className="panel-title">
@@ -1871,7 +1967,7 @@ export default function App() {
           <div className="prompt-box">
             <span className="field-top">
               <span>Prompt</span>
-              <span className={`counter ${promptTooLong ? "invalid" : ""}`}>{promptLength}/{PROMPT_MAX_LENGTH}</span>
+              <span className={`counter ${promptTooShort || promptTooLong ? "invalid" : ""}`}>{promptLength}/{promptMaxLength}</span>
             </span>
             <div className="prompt-editor">
               <div
@@ -1882,8 +1978,8 @@ export default function App() {
                 role="textbox"
                 aria-label="Prompt"
                 aria-multiline="true"
-                aria-invalid={promptTooLong || promptForSubmitTooLong}
-                data-placeholder="必填，最长 6000 字符。建议写清主体、动作、镜头运动、构图、光线、节奏和稳定性要求。"
+                aria-invalid={promptTooShort || promptTooLong || promptForSubmitTooShort || promptForSubmitTooLong}
+                data-placeholder={`必填，${selectedModel?.promptMinLength > 1 ? `至少 ${promptMinLength}、` : ""}最长 ${promptMaxLength} 字符。建议写清主体、动作、镜头运动、构图、光线、节奏和稳定性要求。`}
                 onInput={handlePromptInput}
                 onPaste={handlePromptPaste}
                 onClick={(event) => updateMentionMenuFromInput(event.currentTarget)}
@@ -1983,26 +2079,37 @@ export default function App() {
             <label>
               画幅
               <select value={form.aspect_ratio} onChange={(event) => setForm({ ...form, aspect_ratio: event.target.value })}>
-                <option value="16:9">16:9 横屏</option>
-                <option value="9:16">9:16 竖屏</option>
+                {aspectRatios.map((aspectRatio) => (
+                  <option key={aspectRatio} value={aspectRatio}>
+                    {aspectRatio} {ASPECT_RATIO_LABELS[aspectRatio] || ""}
+                  </option>
+                ))}
               </select>
-              <span className="field-hint">可选。默认 16:9，仅支持 16:9 / 9:16。</span>
+              <span className="field-hint">可选。默认 16:9，支持 {aspectRatios.join(" / ")}。</span>
             </label>
             <label>
               <span className="field-top">
                 <span>时长</span>
-                <span className={`counter ${durationInvalid ? "invalid" : ""}`}>4-15 秒</span>
+                <span className={`counter ${durationInvalid ? "invalid" : ""}`}>{durationRangeLabel} 秒</span>
               </span>
-              <input
-                type="number"
-                min={MIN_DURATION}
-                max={MAX_DURATION}
-                step="1"
-                aria-invalid={durationInvalid}
-                value={form.duration}
-                onChange={(event) => setForm({ ...form, duration: event.target.value })}
-              />
-              <span className="field-hint">可选。默认 10 秒，必须在 4-15 秒之间。</span>
+              {allowedDurations ? (
+                <select value={form.duration} onChange={(event) => setForm({ ...form, duration: event.target.value })}>
+                  {allowedDurations.map((duration) => (
+                    <option key={duration} value={duration}>{duration} 秒</option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  type="number"
+                  min={minDuration}
+                  max={maxDuration}
+                  step="1"
+                  aria-invalid={durationInvalid}
+                  value={form.duration}
+                  onChange={(event) => setForm({ ...form, duration: event.target.value })}
+                />
+              )}
+              <span className="field-hint">可选。默认 {selectedModel?.defaultDuration || 10} 秒，支持 {durationRangeLabel} 秒。</span>
             </label>
             <label>
               分辨率
@@ -2018,9 +2125,11 @@ export default function App() {
               <input
                 placeholder="可选，留空自动生成"
                 value={form.client_task_id}
+                maxLength={128}
+                aria-invalid={clientTaskIdInvalid}
                 onChange={(event) => setForm({ ...form, client_task_id: event.target.value })}
               />
-              <span className="field-hint">强烈建议。创建超时后用同一个 ID 重试，避免重复任务。</span>
+              <span className="field-hint">强烈建议。最多 128 字符，可使用字母、数字、下划线、短横线和点。</span>
             </label>
           </div>
 
@@ -2047,7 +2156,7 @@ export default function App() {
               disabled={!selectedModel?.supportsVideoReference}
               invalid={form.videos.length > VIDEO_MAX_COUNT || unsupportedVideoReference}
               loading={uploading.video}
-              modelWarning={selectedModel?.supportsVideoReference ? FIELD_CONFIG.video.optionalHint : "当前模型不支持参考视频，仅 XH / XH 1080p / XH 4K 可用。"}
+              modelWarning={selectedModel?.supportsVideoReference ? FIELD_CONFIG.video.optionalHint : "当前模型不支持参考视频。"}
               onUpload={(files) => handleUpload("video", files)}
               onAdd={(asset) => addAssetToForm("video", asset)}
               onMention={(asset) => insertAssetMention("video", asset)}
