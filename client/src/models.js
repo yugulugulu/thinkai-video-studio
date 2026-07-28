@@ -43,6 +43,21 @@ export const VIDEO_MODELS = [
     ...CH1_RULES
   },
   {
+    id: "ch0102-sd-2.0-1080p",
+    name: "SD2 1080p 0102",
+    priceLabel: "单次23.375元",
+    description: "CH1 SD2 0102 1080p 通用视频生成模型",
+    tooltipTitle: "CH1 SD2 0102，1080p 输出",
+    tooltipBody: "支持纯文本，以及最多 9 张图片、3 条视频和 3 条音频参考。图片、视频和音频参考总数最多 12 个，输出 1080p，时长支持 4-15 秒。",
+    resolutions: ["1080p"],
+    ...CH1_RULES,
+    aspectRatios: ["16:9", "9:16", "1:1", "3:4", "4:3", "21:9"],
+    minDuration: 4,
+    maxDuration: 15,
+    defaultDuration: 10,
+    maxReferences: 12
+  },
+  {
     id: "ch1-sd-2.0-4k",
     name: "SD2 4K",
     priceLabel: "单次42.5元",
@@ -109,6 +124,26 @@ export const VIDEO_MODELS = [
     promptMinLength: 10,
     promptMaxLength: 5000,
     minDuration: 10,
+    maxDuration: 15,
+    defaultDuration: 10,
+    maxReferences: 12
+  },
+  {
+    id: "ch0904-sd-2.0-720p",
+    group: "ch9",
+    name: "SD2 720p",
+    priceLabel: "单次9.35元",
+    description: "CH9 SD2 720p 通用视频生成模型",
+    tooltipTitle: "CH9 SD2 720p，多素材生成",
+    tooltipBody: "支持纯文本，以及最多 9 张图片、3 条视频和 3 条音频参考。图片、视频和音频参考总数最多 12 个，输出 720p，时长支持 5-15 秒。",
+    aspectRatios: ["16:9", "9:16"],
+    resolutions: ["720p"],
+    textToVideo: true,
+    requiresReference: false,
+    supportsVideoReference: true,
+    promptMinLength: 10,
+    promptMaxLength: 5000,
+    minDuration: 5,
     maxDuration: 15,
     defaultDuration: 10,
     maxReferences: 12
