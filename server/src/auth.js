@@ -2,6 +2,7 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { envString } from "./env.js";
 import { query } from "./db.js";
+import { normalizeHeaderValue } from "./http.js";
 
 const JWT_SECRET = envString("JWT_SECRET", "thinkai-video-studio-dev-secret");
 const LOGIN_FAILURE_WINDOW_MS = 60 * 1000;
@@ -166,10 +167,7 @@ export async function getApiKeyByUserId(userId) {
 }
 
 export async function saveApiKeyForUser(userId, apiKey) {
-  const normalizedApiKey = String(apiKey || "").trim();
-  if (!normalizedApiKey) {
-    throw new Error("API Key 不能为空");
-  }
+  const normalizedApiKey = normalizeHeaderValue(apiKey, "API Key");
 
   const existing = await getApiKeyByUserId(userId);
   if (existing?.apiKey === normalizedApiKey) {

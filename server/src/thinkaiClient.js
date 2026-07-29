@@ -1,3 +1,5 @@
+import { normalizeHeaderValue } from "./http.js";
+
 function normalizeBaseUrl(baseUrl) {
   return baseUrl.replace(/\/+$/, "");
 }
@@ -23,8 +25,9 @@ async function parseJsonResponse(response) {
 }
 
 function headers(apiKey) {
+  const normalizedApiKey = normalizeHeaderValue(apiKey, "API Key");
   return {
-    Authorization: `Bearer ${apiKey}`,
+    Authorization: `Bearer ${normalizedApiKey}`,
     "Content-Type": "application/json"
   };
 }
@@ -59,8 +62,9 @@ export async function getVideoTask(config, taskId) {
 }
 
 export async function getVideoContentStream(config, taskId, options = {}) {
+  const normalizedApiKey = normalizeHeaderValue(config.apiKey, "API Key");
   const headers = {
-    Authorization: `Bearer ${config.apiKey}`
+    Authorization: `Bearer ${normalizedApiKey}`
   };
   if (options.range) {
     headers.Range = options.range;

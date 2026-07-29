@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "db:start": "docker start thinkai-postgres || docker run -d --name thinkai-postgres -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=thinkai_video_studio -p 5432:5432 public.ecr.aws/docker/library/postgres:16",
+    "db:start": "docker start thinkai-postgres || docker run -d --name thinkai-postgres -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=thinkai_video_studio -p 5434:5432 public.ecr.aws/docker/library/postgres:16",
     "db:stop": "docker stop thinkai-postgres",
     "dev": "concurrently \"npm run dev --workspace server\" \"npm run dev --workspace client\"",
     "build": "npm run build --workspace client",
