@@ -137,6 +137,16 @@ function isPollingStatus(status) {
   return ["queued", "in_progress", "running", "processing", "completed", "archiving"].includes(status);
 }
 
+function sortTaskRecordsByCreatedAt(records) {
+  return [...records].sort((left, right) => {
+    const parsedLeftTime = new Date(left.createdAt || 0).getTime();
+    const parsedRightTime = new Date(right.createdAt || 0).getTime();
+    const leftTime = Number.isFinite(parsedLeftTime) ? parsedLeftTime : 0;
+    const rightTime = Number.isFinite(parsedRightTime) ? parsedRightTime : 0;
+    return rightTime - leftTime;
+  });
+}
+
 function taskFromRecord(record) {
   if (!record) return null;
   return {
@@ -776,6 +786,7 @@ export default function App() {
   const pollErrorCountsRef = useRef(new Map());
   const pollInFlightRef = useRef(new Set());
   const videoAccessRef = useRef({ taskId: "", file: null });
+  const visibleTaskIdRef = useRef("");
   const activeUserIdRef = useRef("");
   const promptInputRef = useRef(null);
   const lastPromptSelectionRef = useRef(null);
@@ -851,6 +862,10 @@ export default function App() {
     video: assets.filter((item) => item.kind === "video"),
     audio: assets.filter((item) => item.kind === "audio")
   }), [assets]);
+  const orderedTaskHistory = useMemo(
+    () => sortTaskRecordsByCreatedAt(taskHistory),
+    [taskHistory]
+  );
 
   const mentionOptions = useMemo(() => {
     const query = mentionMenu.query.trim().toLowerCase();
@@ -923,6 +938,7 @@ export default function App() {
   }
 
   function clearTaskViewState() {
+    visibleTaskIdRef.current = "";
     setTask(null);
     setSubmittedPayload(null);
     setSubmittedMemory(null);
@@ -1011,7 +1027,7 @@ export default function App() {
     }
 
     if (taskResult.status === "fulfilled") {
-      setTaskHistory(taskResult.value.tasks);
+      setTaskHistory(sortTaskRecordsByCreatedAt(taskResult.value.tasks));
     }
 
     if (uploadResult.status === "fulfilled") {
@@ -1059,8 +1075,9 @@ export default function App() {
     try {
       const data = await api.tasks();
       if (!isCurrentUserRequest(requestUserId)) return [];
-      setTaskHistory(data.tasks);
-      return data.tasks;
+      const orderedTasks = sortTaskRecordsByCreatedAt(data.tasks);
+      setTaskHistory(orderedTasks);
+      return orderedTasks;
     } catch (error) {
       if (!isCurrentUserRequest(requestUserId)) return [];
       setMessage(error.message);
@@ -1124,7 +1141,9 @@ export default function App() {
       videoAccessRef.current.file &&
       !isVideoAccessExpired(videoAccessRef.current.file)
     ) {
-      setVideoFile(videoAccessRef.current.file);
+      if (visibleTaskIdRef.current === taskId) {
+        setVideoFile(videoAccessRef.current.file);
+      }
       return videoAccessRef.current.file;
     }
     const access = await api.getVideoAccess(taskId);
@@ -1134,8 +1153,10 @@ export default function App() {
       expiresAt: access.expiresAt || null,
       isSigned: Boolean(access.isSigned)
     };
-    videoAccessRef.current = { taskId, file };
-    setVideoFile(file);
+    if (visibleTaskIdRef.current === taskId) {
+      videoAccessRef.current = { taskId, file };
+      setVideoFile(file);
+    }
     return file;
   }
 
@@ -1143,7 +1164,8 @@ export default function App() {
     const requestUserId = currentUser?.id;
     const data = await api.getTask(taskId);
     if (!isCurrentUserRequest(requestUserId)) return { task: null, record: null };
-    if (updateCurrentTask) {
+    const shouldUpdateVisibleTask = updateCurrentTask && visibleTaskIdRef.current === taskId;
+    if (shouldUpdateVisibleTask) {
       setTask(data.task);
     }
     const tasks = await loadTasks();
@@ -1153,7 +1175,7 @@ export default function App() {
     if (!isPollingStatus(data.task.status) || hasArchivedFile) {
       stopPolling(taskId);
     }
-    if (updateCurrentTask && (canPreviewStatus(data.task.status) || hasArchivedFile)) {
+    if (shouldUpdateVisibleTask && (canPreviewStatus(data.task.status) || hasArchivedFile)) {
       await loadVideoAccess(taskId);
     }
     return { task: data.task, record: currentRecord || null };
@@ -1168,7 +1190,11 @@ export default function App() {
     } catch (error) {
       const nextErrorCount = (pollErrorCountsRef.current.get(taskId) || 0) + 1;
       pollErrorCountsRef.current.set(taskId, nextErrorCount);
-      if (nextErrorCount === POLL_ERROR_NOTICE_THRESHOLD && updateCurrentTask) {
+      if (
+        nextErrorCount === POLL_ERROR_NOTICE_THRESHOLD &&
+        updateCurrentTask &&
+        visibleTaskIdRef.current === taskId
+      ) {
         setMessage(`任务查询暂时失败，将按当前频率继续查询。原因：${error.message}`);
       }
     } finally {
@@ -1409,6 +1435,7 @@ export default function App() {
 
     setBusy(true);
     setMessage("");
+    visibleTaskIdRef.current = "";
     setVideoFile(null);
     setTask(null);
     setSubmittedPayload(null);
@@ -1426,6 +1453,7 @@ export default function App() {
         memory
       };
       const data = await api.createVideo(payload);
+      visibleTaskIdRef.current = data.task.id;
       setTask(data.task);
       setSubmittedPayload(data.payload);
       setSubmittedMemory(memory);
@@ -1482,6 +1510,7 @@ export default function App() {
   }
 
   function resumeHistoryTask(record) {
+    visibleTaskIdRef.current = record.taskId;
     setTask(taskFromRecord(record));
     setSubmittedPayload(record.payload || null);
     setSubmittedMemory(getReusableTaskMemory(record));
@@ -1565,7 +1594,7 @@ export default function App() {
   useEffect(() => {
     if (!currentUser) return;
 
-    const resumableTasks = taskHistory.filter((item) => isPollingStatus(item.status));
+    const resumableTasks = orderedTaskHistory.filter((item) => isPollingStatus(item.status));
     const resumableTaskIds = new Set(resumableTasks.map((item) => item.taskId));
 
     for (const pollingTaskId of pollRefs.current.keys()) {
@@ -1576,8 +1605,9 @@ export default function App() {
     setActiveTaskIds(Array.from(resumableTaskIds), currentUser.id);
 
     if (!resumableTasks.length) return;
-    const visibleTask = task?.id ? null : resumableTasks[0];
+    const visibleTask = visibleTaskIdRef.current ? null : resumableTasks[0];
     if (visibleTask) {
+      visibleTaskIdRef.current = visibleTask.taskId;
       setTask(taskFromRecord(visibleTask));
       setSubmittedPayload(visibleTask.payload || null);
       setSubmittedMemory(getReusableTaskMemory(visibleTask));
@@ -1591,13 +1621,17 @@ export default function App() {
     const newlyResumed = [];
     for (const resumableTask of resumableTasks) {
       if (pollRefs.current.has(resumableTask.taskId)) continue;
-      startPolling(resumableTask.taskId, true, visibleTask?.taskId === resumableTask.taskId);
+      startPolling(
+        resumableTask.taskId,
+        true,
+        visibleTaskIdRef.current === resumableTask.taskId
+      );
       newlyResumed.push(resumableTask.taskId);
     }
     if (newlyResumed.length) {
       setMessage(`已恢复 ${newlyResumed.length} 个任务的轮询。`);
     }
-  }, [currentUser, taskHistory, config.pollIntervalMs]);
+  }, [currentUser, orderedTaskHistory, config.pollIntervalMs]);
 
   if (authLoading) {
     return <main className="auth-shell"><section className="auth-card"><h1>加载中</h1></section></main>;
@@ -1712,20 +1746,20 @@ export default function App() {
             <div className="history-dialog-head">
               <div className="panel-title">
                 <Icon name="◷" />
-                <span>更多历史任务</span>
+                <span>全部任务</span>
               </div>
               <div className="history-dialog-actions">
-                <span>{Math.max(taskHistory.length - 1, 0)} 条</span>
+                <span>{orderedTaskHistory.length} 条</span>
                 <button type="button" className="icon-button" onClick={() => setHistoryDialogOpen(false)} aria-label="关闭">
                   <Icon name="×" size={18} />
                 </button>
               </div>
             </div>
-            {taskHistory.length <= 1 ? (
-              <p className="empty-history">暂无更多历史任务。</p>
+            {orderedTaskHistory.length === 0 ? (
+              <p className="empty-history">暂无历史任务。</p>
             ) : (
               <div className="history-dialog-list">
-                {taskHistory.slice(1).map((record) => renderHistoryItem(record, { closeOnSelect: true }))}
+                {orderedTaskHistory.map((record) => renderHistoryItem(record, { closeOnSelect: true }))}
               </div>
             )}
           </section>
@@ -1944,7 +1978,7 @@ export default function App() {
                   <span>任务历史</span>
                 </div>
                 <div className="history-tools">
-                  <button className="mini-button" onClick={() => setHistoryDialogOpen(true)} disabled={taskHistory.length <= 1}>
+                  <button className="mini-button" onClick={() => setHistoryDialogOpen(true)} disabled={orderedTaskHistory.length === 0}>
                     查看更多
                   </button>
                   <button className="mini-button" onClick={loadTasks} disabled={historyLoading}>
@@ -1953,11 +1987,11 @@ export default function App() {
                 </div>
               </div>
 
-              {taskHistory.length === 0 ? (
+              {orderedTaskHistory.length === 0 ? (
                 <p className="empty-history">暂无历史任务。创建任务后会自动写入数据库。</p>
               ) : (
                 <div className="history-list">
-                  {taskHistory.slice(0, 1).map((record) => renderHistoryItem(record))}
+                  {orderedTaskHistory.slice(0, 1).map((record) => renderHistoryItem(record))}
                 </div>
               )}
             </div>

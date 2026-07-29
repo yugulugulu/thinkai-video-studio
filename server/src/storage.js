@@ -88,7 +88,7 @@ export async function readTasks(userId) {
     `SELECT user_id, task_id, client_task_id, status, progress, model, payload, memory, task, file, created_at, updated_at
      FROM video_tasks
      ${whereClause}
-     ORDER BY updated_at DESC
+     ORDER BY created_at DESC, id DESC
      LIMIT $${params.length}`,
     params
   );
@@ -185,7 +185,7 @@ export async function upsertTaskRecord(record) {
        SELECT id
        FROM video_tasks
        WHERE user_id = $1
-       ORDER BY updated_at DESC
+       ORDER BY created_at DESC, id DESC
        OFFSET 100
      )`,
     [nextRecord.userId]
