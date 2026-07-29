@@ -612,7 +612,10 @@ function ReferencePanel({
           ) : (
             <div className="asset-list">
               {selected.map((asset, index) => (
-                <div className="asset-item" key={`selected-${asset.id || asset.url}`}>
+                <div
+                  className={`asset-item ${showImagePreview && asset.url ? "with-preview" : ""}`}
+                  key={`selected-${asset.id || asset.url}`}
+                >
                   <div className="asset-meta">
                     <strong>
                       <span className="reference-token">{getReferenceToken(kind, index + 1)}</span>
@@ -642,6 +645,11 @@ function ReferencePanel({
                       移除
                     </button>
                   </div>
+                  {showImagePreview && asset.url && (
+                    <div className="asset-selected-preview">
+                      <img src={asset.url} alt={asset.filename} loading="lazy" />
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
