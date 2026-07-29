@@ -20,7 +20,9 @@ export function validateCreatePayload(body) {
   const model = getModel(body.model);
   if (!model) throw new Error("请选择有效的视频模型");
 
-  const prompt = String(body.prompt || "").trim();
+  const prompt = String(body.prompt || "")
+    .trim()
+    .replace(/@参考图(\d+)/g, "@图片$1");
   if (!prompt) throw new Error("请输入提示词");
   if (prompt.length < (model.promptMinLength || 1)) {
     throw new Error(`${model.id} 提示词最少 ${model.promptMinLength} 字符`);

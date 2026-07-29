@@ -44,7 +44,8 @@ const POLL_ERROR_NOTICE_THRESHOLD = 6;
 const FIELD_CONFIG = {
   image: {
     field: "images",
-    referenceLabel: "参考图",
+    referenceLabel: "图片",
+    legacyReferenceLabels: ["参考图"],
     label: "参考图片",
     uploadLabel: "上传图片",
     accept: "image/*",
@@ -190,7 +191,55 @@ function getReferenceToken(kind, index) {
   return `@${getReferenceLabel(kind, index)}`;
 }
 
-const PROMPT_TOKEN_PATTERN = /@(?:参考图|参考视频|音频)\d+/g;
+function getReferenceTokenPattern(kind, index = null) {
+  const labels = [
+    FIELD_CONFIG[kind].referenceLabel,
+    ...(FIELD_CONFIG[kind].legacyReferenceLabels || [])
+  ].map(escapeRegExp);
+  const indexPattern = index === null ? "(\\d+)" : `${index}(?!\\d)`;
+  return new RegExp(`@(?:${labels.join("|")})${indexPattern}`, "g");
+}
+
+function normalizePromptReferenceTokens(prompt) {
+  return String(prompt || "").replace(/@参考图(\d+)/g, "@图片$1");
+}
+
+const PROMPT_TOKEN_PATTERN = /@(?:图片|参考图|参考视频|音频)\d+/g;
+
+function remapPromptReferencesAfterAssetRemoval(prompt, kind, currentAssets, removedAsset) {
+  const removedAssetKey = getAssetKey(removedAsset);
+  const nextAssets = currentAssets.filter((item) => getAssetKey(item) !== removedAssetKey);
+  const nextIndexByAssetKey = new Map(
+    nextAssets.map((item, index) => [getAssetKey(item), index])
+  );
+  const tokenPattern = getReferenceTokenPattern(kind);
+  let removedTokenCount = 0;
+  let renumberedTokenCount = 0;
+
+  const nextPrompt = String(prompt || "").replace(tokenPattern, (token, indexText) => {
+    const sourceAsset = currentAssets[Number(indexText) - 1];
+    if (!sourceAsset) return token;
+
+    const nextIndex = nextIndexByAssetKey.get(getAssetKey(sourceAsset));
+    if (nextIndex === undefined) {
+      removedTokenCount += 1;
+      return "";
+    }
+
+    const nextToken = getReferenceToken(kind, nextIndex + 1);
+    if (nextToken !== token) {
+      renumberedTokenCount += 1;
+    }
+    return nextToken;
+  }).replace(/[ \t]{2,}/g, " ");
+
+  return {
+    nextAssets,
+    nextPrompt,
+    removedTokenCount,
+    renumberedTokenCount
+  };
+}
 
 function getPromptTokenDeletion(value, selectionStart, selectionEnd, key) {
   if (!["Backspace", "Delete"].includes(key)) return null;
@@ -425,7 +474,7 @@ function cloneMemoryAsset(asset, kind) {
 
 function buildTaskMemory(formValue, submittedPrompt) {
   return {
-    editorPrompt: formValue.prompt,
+    editorPrompt: normalizePromptReferenceTokens(formValue.prompt),
     submittedPrompt,
     model: formValue.model,
     aspect_ratio: formValue.aspect_ratio,
@@ -453,7 +502,13 @@ function assetsFromPayloadUrls(urls, kind) {
 }
 
 function getReusableTaskMemory(record) {
-  if (record?.memory) return record.memory;
+  if (record?.memory) {
+    return {
+      ...record.memory,
+      editorPrompt: normalizePromptReferenceTokens(record.memory.editorPrompt),
+      submittedPrompt: normalizePromptReferenceTokens(record.memory.submittedPrompt)
+    };
+  }
 
   const payload = record?.payload || {};
   const references = payload.references || {};
@@ -462,8 +517,8 @@ function getReusableTaskMemory(record) {
   const audios = references.audios || (references.audio ? [references.audio] : payload.audios || []);
 
   return {
-    editorPrompt: payload.prompt || "",
-    submittedPrompt: payload.prompt || "",
+    editorPrompt: normalizePromptReferenceTokens(payload.prompt),
+    submittedPrompt: normalizePromptReferenceTokens(payload.prompt),
     model: payload.model || record?.model || defaultForm.model,
     aspect_ratio: payload.aspect_ratio || defaultForm.aspect_ratio,
     duration: Number(payload.duration || defaultForm.duration),
@@ -484,8 +539,11 @@ function countMemoryReferences(memory) {
 
 function buildPromptWithReferenceTokens(formValue) {
   return createReferenceBindings(formValue).reduce((prompt, binding) => (
-    prompt.replace(new RegExp(escapeRegExp(binding.token), "g"), binding.label)
-  ), formValue.prompt.trim());
+    prompt.replace(
+      getReferenceTokenPattern(binding.kind, binding.index),
+      binding.kind === "image" ? binding.token : binding.label
+    )
+  ), normalizePromptReferenceTokens(formValue.prompt).trim());
 }
 
 function insertTextAtSelection(source, insertion, selection) {
@@ -506,7 +564,7 @@ function getActiveMention(value, caret) {
   if (atIndex < 0) return null;
 
   const mention = beforeCaret.slice(atIndex);
-  if (/^@(?:参考图|参考视频|音频)\d+$/.test(mention)) return null;
+  if (/^@(?:图片|参考图|参考视频|音频)\d+$/.test(mention)) return null;
 
   const query = mention.slice(1);
   if (/\s/.test(query)) return null;
@@ -1268,10 +1326,36 @@ export default function App() {
 
   function removeAssetFromForm(kind, asset) {
     const fieldName = FIELD_CONFIG[kind].field;
-    setForm((current) => ({
-      ...current,
-      [fieldName]: current[fieldName].filter((item) => String(item.id || item.url) !== String(asset.id || asset.url))
-    }));
+    closeMentionMenu();
+    setForm((current) => {
+      const removedIndex = current[fieldName].findIndex(
+        (item) => getAssetKey(item) === getAssetKey(asset)
+      );
+      if (removedIndex < 0) return current;
+
+      const remapped = remapPromptReferencesAfterAssetRemoval(
+        current.prompt,
+        kind,
+        current[fieldName],
+        asset
+      );
+      const removedToken = getReferenceToken(kind, removedIndex + 1);
+      const referenceLabel = FIELD_CONFIG[kind].label;
+
+      if (remapped.removedTokenCount || remapped.renumberedTokenCount) {
+        setMessage(
+          `已移除 ${removedToken}，并自动更新 Prompt 中的${referenceLabel}编号。`
+        );
+      } else {
+        setMessage(`已移除 ${removedToken}。`);
+      }
+
+      return {
+        ...current,
+        prompt: remapped.nextPrompt,
+        [fieldName]: remapped.nextAssets
+      };
+    });
   }
 
   function getPromptSelection() {
@@ -1342,12 +1426,20 @@ export default function App() {
   function handlePromptInput(event) {
     const editor = event.currentTarget;
     const selection = getPromptEditorSelection(editor);
-    let nextPrompt = getPromptNodeText(editor);
+    const source = getPromptNodeText(editor);
+    let nextPrompt = normalizePromptReferenceTokens(source);
+    let nextCaret = selection
+      ? normalizePromptReferenceTokens(source.slice(0, selection.end)).length
+      : nextPrompt.length;
 
     if (nextPrompt.length > promptMaxLength) {
       nextPrompt = nextPrompt.slice(0, promptMaxLength);
+      nextCaret = Math.min(nextCaret, promptMaxLength);
+    }
+
+    if (nextPrompt !== source) {
       syncPromptEditorDom(editor, nextPrompt, validPromptTokens);
-      setPromptEditorCaret(editor, Math.min(selection?.end || promptMaxLength, promptMaxLength));
+      setPromptEditorCaret(editor, nextCaret);
     }
 
     setForm((current) => ({ ...current, prompt: nextPrompt }));
@@ -1361,8 +1453,11 @@ export default function App() {
     const source = getPromptNodeText(editor);
     const availableLength = promptMaxLength - (source.length - (selection.end - selection.start));
     const pastedText = event.clipboardData.getData("text/plain").slice(0, Math.max(0, availableLength));
-    const nextPrompt = `${source.slice(0, selection.start)}${pastedText}${source.slice(selection.end)}`;
-    const nextCaret = selection.start + pastedText.length;
+    const sourceBeforeCaret = `${source.slice(0, selection.start)}${pastedText}`;
+    const nextPrompt = normalizePromptReferenceTokens(
+      `${sourceBeforeCaret}${source.slice(selection.end)}`
+    );
+    const nextCaret = normalizePromptReferenceTokens(sourceBeforeCaret).length;
 
     setForm((current) => ({ ...current, prompt: nextPrompt }));
     window.requestAnimationFrame(() => {
