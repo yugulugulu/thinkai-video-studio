@@ -93,8 +93,8 @@ export const VIDEO_MODELS = [
     ...CH3_RULES
   },
   {
-    id: "ch3-sd-2.0-xh",
-    name: "SD2 XH",
+    id: "ch0301-sd-2.0-720p",
+    name: "SD2 720p",
     description: "XH 质量优先，支持纯文本和多素材参考",
     tooltipTitle: "SD2-9图-满血-XH，质量优先",
     tooltipBody: "720p 版本，支持纯文本生视频，也支持图片、视频、音频混合参考。适合大多数正式生成场景，质量和灵活性比较均衡。",

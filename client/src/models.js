@@ -68,9 +68,9 @@ export const VIDEO_MODELS = [
     ...CH1_RULES
   },
   {
-    id: "ch3-sd-2.0-xh",
+    id: "ch0301-sd-2.0-720p",
     group: "ch3",
-    name: "SD2 XH",
+    name: "SD2 720p",
     priceLabel: "单次9.35元",
     description: "XH 质量优先，支持纯文本和多素材参考",
     tooltipTitle: "SD2-9图-满血-XH，质量优先",

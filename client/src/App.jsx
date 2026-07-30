@@ -4,7 +4,7 @@ import { VIDEO_MODELS, filterEnabledModels } from "./models.js";
 import weblogo from "./weblogo.png";
 
 const defaultForm = {
-  model: "ch3-sd-2.0-xh",
+  model: "ch0301-sd-2.0-720p",
   prompt: "一位穿浅色风衣的年轻女性在雨后的城市街道自然向前走，镜头缓慢推进，路面有柔和倒影，电影感，动作自然稳定",
   aspect_ratio: "16:9",
   duration: 10,
