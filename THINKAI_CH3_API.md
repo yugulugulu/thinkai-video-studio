@@ -26,13 +26,11 @@ Content-Type: application/json
 
 ## 2. 支持模型
 
-当前支持 9 个模型。模型 ID 与 `resolution` 必须严格对应，不能交叉组合。
+当前支持 7 个模型。模型 ID 与 `resolution` 必须严格对应，不能交叉组合。
 
 | 分组 | 模型 ID | 分辨率 | 纯文本 | 图片/视频/音频参考 |
 | --- | --- | --- | --- | --- |
-| CH1 | `ch1-sd-2.0-720p` | `720p` | 支持 | 最多 9 / 3 / 3 |
-| CH1 | `ch1-sd-2.0-1080p` | `1080p` | 支持 | 最多 9 / 3 / 3 |
-| CH1 | `ch1-sd-2.0-4k` | `4k` | 支持 | 最多 9 / 3 / 3 |
+| CH1 | `ch0102-sd-2.0-720p` | `720p` | 支持 | 最多 9 / 3 / 3 |
 | CH1 | `ch0102-sd-2.0-1080p` | `1080p` | 支持 | 最多 9 / 3 / 3，总数最多 12 |
 | CH3 | `ch0301-sd-2.0-720p` | `720p` | 支持 | 最多 9 / 3 / 3 |
 | CH3 | `ch3-sd-2.0-xh-1080p` | `1080p` | 支持 | 最多 9 / 3 / 3 |
@@ -106,7 +104,7 @@ curl -X POST 'https://www.thinkai.tv/v1/videos' \
   -H 'Authorization: Bearer YOUR_THINKAI_API_KEY' \
   -H 'Content-Type: application/json' \
   -d '{
-    "model": "ch1-sd-2.0-1080p",
+    "model": "ch0102-sd-2.0-1080p",
     "prompt": "保持人物外貌一致，参考动作和音乐自然走动，画面稳定",
     "mode": "references",
     "client_task_id": "order_20260721_ch1_000001",
@@ -167,7 +165,7 @@ curl -X POST 'https://www.thinkai.tv/v1/videos' \
 {
   "id": "task_abc123def456",
   "object": "video",
-  "model": "ch1-sd-2.0-1080p",
+  "model": "ch0102-sd-2.0-1080p",
   "status": "queued",
   "progress": 0,
   "created_at": 1784592000
@@ -198,7 +196,7 @@ curl 'https://www.thinkai.tv/v1/videos/task_abc123def456' \
 {
   "id": "task_abc123def456",
   "object": "video",
-  "model": "ch1-sd-2.0-1080p",
+  "model": "ch0102-sd-2.0-1080p",
   "status": "completed",
   "progress": 100,
   "created_at": 1784592000,
@@ -255,7 +253,7 @@ async function createTask() {
     method: "POST",
     headers,
     body: JSON.stringify({
-      model: "ch1-sd-2.0-720p",
+      model: "ch0102-sd-2.0-720p",
       prompt: "让人物自然走动，镜头缓慢推进，电影感",
       mode: "references",
       client_task_id: clientTaskId,

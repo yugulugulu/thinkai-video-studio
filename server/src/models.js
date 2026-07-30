@@ -24,23 +24,13 @@ const CH1_RULES = {
 
 export const VIDEO_MODELS = [
   {
-    id: "ch1-sd-2.0-720p",
+    id: "ch0102-sd-2.0-720p",
     name: "SD2 720p",
     priceLabel: "单次9.35元",
     description: "CH1 SD2 满血版，支持纯文本和多素材参考",
     tooltipTitle: "CH1 SD2 满血版，720p 输出",
     tooltipBody: "支持纯文本生成，以及最多 9 张图片、3 条视频和 3 条音频参考。适合常规清晰度的视频生成。",
     resolutions: ["720p"],
-    ...CH1_RULES
-  },
-  {
-    id: "ch1-sd-2.0-1080p",
-    name: "SD2 1080p",
-    priceLabel: "单次23.375元",
-    description: "CH1 SD2 满血高清版，支持纯文本和多素材参考",
-    tooltipTitle: "CH1 SD2 满血版，1080p 输出",
-    tooltipBody: "支持纯文本生成，以及最多 9 张图片、3 条视频和 3 条音频参考。适合对成片清晰度要求更高的场景。",
-    resolutions: ["1080p"],
     ...CH1_RULES
   },
   {
@@ -57,16 +47,6 @@ export const VIDEO_MODELS = [
     maxDuration: 15,
     defaultDuration: 10,
     maxReferences: 12
-  },
-  {
-    id: "ch1-sd-2.0-4k",
-    name: "SD2 4K",
-    priceLabel: "单次42.5元",
-    description: "CH1 SD2 满血 4K 版，支持纯文本和多素材参考",
-    tooltipTitle: "CH1 SD2 满血版，4K 输出",
-    tooltipBody: "支持纯文本生成，以及最多 9 张图片、3 条视频和 3 条音频参考。适合高分辨率成片和后续剪辑。",
-    resolutions: ["4k"],
-    ...CH1_RULES
   },
   {
     id: "ch3-sd-2.0-fast",
